@@ -19,6 +19,13 @@ build/
 out/
 coverage/
 *.tsbuildinfo
+.tmp/
+test-results/
+playwright-user-data/
+playwright-dom-check/
+playwright-live-inspect/
+playwright-live-sanity/
+playwright-live-verify/
 
 # Editor / OS files
 .DS_Store
