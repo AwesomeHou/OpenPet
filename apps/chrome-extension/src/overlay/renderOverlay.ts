@@ -37,10 +37,14 @@ const businessStateToAction: Record<ScenePetState["state"], PetActionName> = {
 };
 
 type OverlayButton = HTMLButtonElement & {
+  __openPetState?: ScenePetState;
+  __openPetHovering?: boolean;
+  __openPetDragAction?: PetActionName | null;
   __openPetDragState?: {
     pointerId: number;
     startX: number;
     startY: number;
+    lastX: number;
     originLeft: number;
     originTop: number;
     moved: boolean;
@@ -50,6 +54,7 @@ type OverlayButton = HTMLButtonElement & {
 let latestMessage: SceneUpdateMessage | null = null;
 const animationTimerMap = new WeakMap<HTMLElement, number>();
 const animationTokenMap = new WeakMap<HTMLElement, number>();
+const optimisticPlacementMap = new Map<ScenePetState["petId"], OverlayPlacement>();
 
 const overlayStyles = `
 #${overlayRootId} {
@@ -167,18 +172,27 @@ function clearSpriteAnimation(sprite: HTMLElement): void {
   }
 }
 
-function startSpriteAnimation(sprite: HTMLElement, petState: ScenePetState): void {
-  const action = businessStateToAction[petState.state];
+function startSpriteAnimation(sprite: HTMLElement, petState: ScenePetState, action: PetActionName): void {
   if (!petState.pet.spritesheetDataUrl) {
     clearSpriteAnimation(sprite);
     sprite.style.backgroundImage = emptyBackground;
     sprite.removeAttribute("data-action");
     sprite.removeAttribute("data-frame");
+    delete sprite.dataset.sourceUrl;
+    return;
+  }
+
+  if (
+    sprite.dataset.action === action &&
+    sprite.dataset.sourceUrl === petState.pet.spritesheetDataUrl &&
+    animationTimerMap.has(sprite)
+  ) {
     return;
   }
 
   clearSpriteAnimation(sprite);
   sprite.style.backgroundImage = `url("${petState.pet.spritesheetDataUrl}")`;
+  sprite.dataset.sourceUrl = petState.pet.spritesheetDataUrl;
   const token = (animationTokenMap.get(sprite) ?? 0) + 1;
   animationTokenMap.set(sprite, token);
 
@@ -210,6 +224,47 @@ function startSpriteAnimation(sprite: HTMLElement, petState: ScenePetState): voi
   };
 
   tick(0, action);
+}
+
+function resolvePlacement(petState: ScenePetState): OverlayPlacement {
+  const optimisticPlacement = optimisticPlacementMap.get(petState.petId);
+  if (
+    optimisticPlacement &&
+    optimisticPlacement.left === petState.placement.left &&
+    optimisticPlacement.top === petState.placement.top &&
+    optimisticPlacement.facing === petState.placement.facing
+  ) {
+    optimisticPlacementMap.delete(petState.petId);
+    return petState.placement;
+  }
+
+  return optimisticPlacement ?? petState.placement;
+}
+
+function resolveDisplayedAction(button: OverlayButton, petState: ScenePetState): PetActionName {
+  if (button.__openPetDragAction) {
+    return button.__openPetDragAction;
+  }
+  if (button.__openPetHovering) {
+    return "running";
+  }
+  return businessStateToAction[petState.state];
+}
+
+function refreshPetPresentation(button: OverlayButton, petState: ScenePetState): void {
+  button.__openPetState = petState;
+  const placement = resolvePlacement(petState);
+  button.style.left = `${placement.left}px`;
+  button.style.top = `${placement.top}px`;
+
+  const sprite = button.querySelector<HTMLElement>(".openpet-sprite");
+  const label = button.querySelector<HTMLElement>(".openpet-state");
+  if (sprite) {
+    startSpriteAnimation(sprite, petState, resolveDisplayedAction(button, petState));
+  }
+  if (label) {
+    label.textContent = petState.state;
+  }
 }
 
 async function persistPlacement(siteId: ScenePetState["siteId"], placement: OverlayPlacement): Promise<void> {
@@ -259,6 +314,7 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
+      lastX: event.clientX,
       originLeft: rect.left,
       originTop: rect.top,
       moved: false,
@@ -279,8 +335,20 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
     }
 
     dragState.moved = true;
-    button.style.left = `${Math.max(0, dragState.originLeft + deltaX)}px`;
-    button.style.top = `${Math.max(0, dragState.originTop + deltaY)}px`;
+    const moveDeltaX = event.clientX - dragState.lastX;
+    const nextPlacement: OverlayPlacement = {
+      left: Math.max(0, dragState.originLeft + deltaX),
+      top: Math.max(0, dragState.originTop + deltaY),
+      facing: petState.placement.facing,
+    };
+    optimisticPlacementMap.set(petState.petId, nextPlacement);
+    if (moveDeltaX !== 0) {
+      button.__openPetDragAction = moveDeltaX > 0 ? "running-right" : "running-left";
+    }
+    dragState.lastX = event.clientX;
+    button.style.left = `${nextPlacement.left}px`;
+    button.style.top = `${nextPlacement.top}px`;
+    refreshPetPresentation(button, petState);
   };
 
   const finishDrag = (event: PointerEvent) => {
@@ -292,16 +360,32 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
     delete button.__openPetDragState;
     if (dragState.moved) {
       button.dataset.suppressClick = "true";
+      button.__openPetDragAction = null;
+      refreshPetPresentation(button, petState);
+      const placement = optimisticPlacementMap.get(petState.petId) ?? petState.placement;
       void persistPlacement(petState.siteId, {
-        left: Number.parseFloat(button.style.left) || petState.placement.left,
-        top: Number.parseFloat(button.style.top) || petState.placement.top,
-        facing: petState.placement.facing,
+        left: placement.left,
+        top: placement.top,
+        facing: placement.facing,
       });
+      return;
     }
+
+    button.__openPetDragAction = null;
+    refreshPetPresentation(button, petState);
   };
 
   button.onpointerup = finishDrag;
   button.onpointercancel = finishDrag;
+  button.onpointerenter = () => {
+    button.__openPetHovering = true;
+    refreshPetPresentation(button, petState);
+  };
+  button.onpointerleave = () => {
+    button.__openPetHovering = false;
+    button.__openPetDragAction = null;
+    refreshPetPresentation(button, petState);
+  };
 }
 
 function renderPet(scene: HTMLElement, petState: ScenePetState): void {
@@ -318,18 +402,8 @@ function renderPet(scene: HTMLElement, petState: ScenePetState): void {
   }
 
   button.dataset.siteId = petState.siteId;
-  button.style.left = `${petState.placement.left}px`;
-  button.style.top = `${petState.placement.top}px`;
-
-  const sprite = button.querySelector<HTMLElement>(".openpet-sprite");
-  const label = button.querySelector<HTMLElement>(".openpet-state");
-  if (sprite) {
-    startSpriteAnimation(sprite, petState);
-  }
-  if (label) {
-    label.textContent = petState.state;
-  }
   bindPetInteractions(button, petState);
+  refreshPetPresentation(button, petState);
 }
 
 export function applyOverlayUpdate(message: SceneUpdateMessage): void {

@@ -206,6 +206,106 @@ describe("overlay rendering", () => {
     expect((otherButton.parentElement as HTMLElement).style.left || otherButton.style.left).not.toBe("44px");
   });
 
+  test("keeps the dragged position locally before scene storage catches up", () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const root = getOverlayRoot() as HTMLDivElement;
+    const button = root.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 16,
+      left: 16,
+      top: 16,
+      right: 236,
+      bottom: 140,
+      width: 220,
+      height: 124,
+      toJSON: () => undefined,
+    } as DOMRect);
+
+    button.onpointerdown?.(createPointerEvent("pointerdown", { button: 0, pointerId: 7, clientX: 24, clientY: 28 }) as PointerEvent);
+    button.onpointermove?.(createPointerEvent("pointermove", { pointerId: 7, clientX: 60, clientY: 70 }) as PointerEvent);
+    button.onpointerup?.(createPointerEvent("pointerup", { pointerId: 7, clientX: 60, clientY: 70 }) as PointerEvent);
+
+    expect(button.style.left).toBe("52px");
+    expect(button.style.top).toBe("58px");
+
+    applyOverlayUpdate(createSceneUpdate());
+
+    expect(button.style.left).toBe("52px");
+    expect(button.style.top).toBe("58px");
+  });
+
+  test("uses hover running animation while the pointer is over a pet", () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
+
+    expect(sprite.dataset.action).toBe("review");
+
+    button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
+
+    expect(sprite.dataset.action).toBe("running");
+
+    button.onpointerleave?.(new Event("pointerleave") as PointerEvent);
+
+    expect(sprite.dataset.action).toBe("review");
+  });
+
+  test("uses directional running animation while dragging left and right", () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 16,
+      left: 16,
+      top: 16,
+      right: 236,
+      bottom: 140,
+      width: 220,
+      height: 124,
+      toJSON: () => undefined,
+    } as DOMRect);
+
+    button.onpointerdown?.(createPointerEvent("pointerdown", { button: 0, pointerId: 7, clientX: 24, clientY: 28 }) as PointerEvent);
+    button.onpointermove?.(createPointerEvent("pointermove", { pointerId: 7, clientX: 58, clientY: 28 }) as PointerEvent);
+    expect(sprite.dataset.action).toBe("running-right");
+
+    button.onpointermove?.(createPointerEvent("pointermove", { pointerId: 7, clientX: 4, clientY: 28 }) as PointerEvent);
+    expect(sprite.dataset.action).toBe("running-left");
+
+    button.onpointerup?.(createPointerEvent("pointerup", { pointerId: 7, clientX: 4, clientY: 28 }) as PointerEvent);
+    expect(sprite.dataset.action).toBe("review");
+  });
+
+  test("switches drag direction immediately based on the latest movement delta", () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 16,
+      left: 16,
+      top: 16,
+      right: 236,
+      bottom: 140,
+      width: 220,
+      height: 124,
+      toJSON: () => undefined,
+    } as DOMRect);
+
+    button.onpointerdown?.(createPointerEvent("pointerdown", { button: 0, pointerId: 7, clientX: 24, clientY: 28 }) as PointerEvent);
+    button.onpointermove?.(createPointerEvent("pointermove", { pointerId: 7, clientX: 58, clientY: 28 }) as PointerEvent);
+    expect(sprite.dataset.action).toBe("running-right");
+
+    button.onpointermove?.(createPointerEvent("pointermove", { pointerId: 7, clientX: 54, clientY: 28 }) as PointerEvent);
+    expect(sprite.dataset.action).toBe("running-left");
+  });
+
   test("keeps both pet animations running independently", () => {
     applyOverlayUpdate(createSceneUpdate());
 
