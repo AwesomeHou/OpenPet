@@ -3,6 +3,7 @@ export const storageKeys = {
   sitePetBindings: "openpet.sitePetBindings",
   overlayVisible: "openpet.overlayVisible",
   overlayPlacements: "openpet.overlayPlacements",
+  popupLocale: "openpet.popupLocale",
 } as const;
 
 export const overlayRootId = "openpet-overlay-root";
