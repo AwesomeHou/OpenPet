@@ -1,13 +1,7 @@
 import { overlayRootId } from "@openpet/shared/constants";
 import { messageTypes, type OpenPetMessage } from "@openpet/shared/messages";
 import { applyOverlayUpdate } from "../overlay/renderOverlay";
-import {
-  collectDeepSeekSignals,
-  detectDeepSeekPage,
-  findComposer,
-  findSendButton,
-  isDeepSeekUrl,
-} from "@openpet/adapters/deepseek";
+import { getAdapterForUrl, type SiteAdapter } from "@openpet/adapters";
 
 type RuntimeTracker = {
   sendTriggeredAt: number | null;
@@ -104,33 +98,30 @@ function injectNetworkProbe(doc: Document): void {
   script.remove();
 }
 
-function isComposerTarget(doc: Document, target: EventTarget | null): boolean {
+function isComposerTarget(adapter: SiteAdapter, doc: Document, target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
   }
 
-  const composer = findComposer(doc);
+  const composer = adapter.findComposer(doc);
   return Boolean(composer && (target === composer || composer.contains(target)));
 }
 
-function isSendTriggerTarget(doc: Document, target: EventTarget | null): boolean {
+function isSendTriggerTarget(adapter: SiteAdapter, doc: Document, target: EventTarget | null): boolean {
   if (!(target instanceof Element)) {
     return false;
   }
 
   const button = target.closest("button");
-  return Boolean(button && button === findSendButton(doc));
+  return Boolean(button && button === adapter.findSendButton(doc));
 }
 
 export function publishSignals(
   doc: Document = document,
+  adapter: SiteAdapter,
   runtime: RuntimeTracker = createRuntimeTracker()
 ): void {
-  if (!detectDeepSeekPage(doc)) {
-    return;
-  }
-
-  const baseSignals = collectDeepSeekSignals(doc);
+  const baseSignals = adapter.collectSignals(doc, { sendTriggered: runtime.sendTriggeredAt !== null });
   const now = Date.now();
   const lastRelevantMutationAt = runtime.lastRelevantMutationAt;
   const responseGrowing =
@@ -158,18 +149,16 @@ export function publishSignals(
 }
 
 export function handleContentMessage(message: OpenPetMessage): void {
-  if (message.type === messageTypes.stateUpdate) {
+  if (message.type === messageTypes.sceneUpdate) {
     console.debug(
-      "[openpet-content] stateUpdate",
+      "[openpet-content] sceneUpdate",
       JSON.stringify({
-        state: message.payload.state,
         visible: message.payload.visible,
-        pet: message.payload.pet
-          ? {
-              id: message.payload.pet.id,
-              displayName: message.payload.pet.displayName,
-            }
-          : null,
+        pets: message.payload.scene.pets.map((pet) => ({
+          id: pet.pet.id,
+          siteId: pet.siteId,
+          state: pet.state,
+        })),
       })
     );
     applyOverlayUpdate(message);
@@ -178,10 +167,10 @@ export function handleContentMessage(message: OpenPetMessage): void {
 
 async function requestCurrentDisplayState(): Promise<void> {
   const response = await chrome.runtime.sendMessage({
-    type: messageTypes.currentDisplayState,
+    type: messageTypes.currentSceneState,
   } as OpenPetMessage);
 
-  if (response?.type === messageTypes.stateUpdate) {
+  if (response?.type === messageTypes.sceneUpdate) {
     handleContentMessage(response);
   }
 }
@@ -189,17 +178,16 @@ async function requestCurrentDisplayState(): Promise<void> {
 export function bootstrapContentScript(doc: Document = document): MutationObserver {
   const runtime = createRuntimeTracker();
   const view = doc.defaultView ?? window;
+  const adapter = getAdapterForUrl(doc.location.href);
   chrome.runtime.onMessage.addListener((message: OpenPetMessage) => {
     handleContentMessage(message);
   });
 
-  if (doc.readyState === "loading") {
-    doc.addEventListener("DOMContentLoaded", () => publishSignals(doc, runtime), { once: true });
+  if (adapter && doc.readyState === "loading") {
+    doc.addEventListener("DOMContentLoaded", () => publishSignals(doc, adapter, runtime), { once: true });
+  } else if (adapter) {
+    publishSignals(doc, adapter, runtime);
   } else {
-    publishSignals(doc, runtime);
-  }
-
-  if (!isDeepSeekUrl(doc.location.href)) {
     void requestCurrentDisplayState();
     return new MutationObserver(() => undefined);
   }
@@ -215,7 +203,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     publishQueued = true;
     queueMicrotask(() => {
       publishQueued = false;
-      publishSignals(doc, runtime);
+      publishSignals(doc, adapter, runtime);
     });
   };
 
@@ -251,7 +239,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
   doc.addEventListener(
     "click",
     (event) => {
-      if (isSendTriggerTarget(doc, event.target)) {
+      if (isSendTriggerTarget(adapter, doc, event.target)) {
         markSendTriggered(runtime);
         scheduleStateTransitions();
         queuePublish();
@@ -263,7 +251,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
   doc.addEventListener(
     "keydown",
     (event) => {
-      if (event.key === "Enter" && !event.shiftKey && isComposerTarget(doc, event.target)) {
+      if (event.key === "Enter" && !event.shiftKey && isComposerTarget(adapter, doc, event.target)) {
         markSendTriggered(runtime);
         scheduleStateTransitions();
         queuePublish();
@@ -276,7 +264,8 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     "input",
     (event) => {
       if (
-        isComposerTarget(doc, event.target) &&
+        adapter &&
+        isComposerTarget(adapter, doc, event.target) &&
         runtime.sendTriggeredAt !== null &&
         runtime.lastRelevantMutationAt === null
       ) {
@@ -325,7 +314,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
   observer.observe(doc.documentElement, {
     subtree: true,
     childList: true,
-    attributes: true,
+    attributes: false,
     characterData: false,
   });
 

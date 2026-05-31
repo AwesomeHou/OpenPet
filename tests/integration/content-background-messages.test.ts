@@ -7,6 +7,38 @@ import {
 import { getOverlayRoot } from "../../apps/chrome-extension/src/overlay/renderOverlay";
 import { messageTypes } from "@openpet/shared/messages";
 
+function createSceneMessage(state: "idle" | "thinking" | "streaming" | "waiting" | "error" | "done") {
+  return {
+    type: messageTypes.sceneUpdate,
+    payload: {
+      scene: {
+        visible: true,
+        pets: [
+          {
+            petId: "doodlebob",
+            siteId: "gemini",
+            tabId: 8,
+            state,
+            pet: {
+              id: "doodlebob",
+              displayName: "Doodle Bob",
+              spritesheetPath: "spritesheet.webp",
+              spritesheetDataUrl: "data:image/webp;base64,abc",
+              importedAt: 1,
+            },
+            placement: {
+              left: 16,
+              top: 16,
+              facing: "right" as const,
+            },
+          },
+        ],
+      },
+      visible: true,
+    },
+  };
+}
+
 describe("content and overlay flow", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -17,7 +49,7 @@ describe("content and overlay flow", () => {
     vi.useRealTimers();
   });
 
-  test("publishes page signals on bootstrap and reacts to state updates", async () => {
+  test("publishes Gemini page signals on bootstrap and reacts to scene updates", async () => {
     const sendMessage = vi.fn(async () => undefined);
     vi.stubGlobal("chrome", {
       runtime: {
@@ -27,9 +59,12 @@ describe("content and overlay flow", () => {
         },
       },
     });
-    const dom = new JSDOM(`<textarea></textarea><button>Send</button>`, {
-      url: "https://chat.deepseek.com/",
-    });
+    const dom = new JSDOM(
+      `<div contenteditable="true"></div><button aria-label="Send message">Send</button>`,
+      {
+        url: "https://gemini.google.com/app",
+      }
+    );
     Object.defineProperty(dom.window.document, "readyState", {
       value: "complete",
       configurable: true,
@@ -37,24 +72,20 @@ describe("content and overlay flow", () => {
 
     const observer = bootstrapContentScript(dom.window.document);
     expect(sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: messageTypes.pageSignals })
+      expect.objectContaining({
+        type: messageTypes.pageSignals,
+        payload: expect.objectContaining({ site: "gemini" }),
+      })
     );
 
-    handleContentMessage({
-      type: messageTypes.stateUpdate,
-      payload: {
-        state: "done",
-        visible: true,
-        pet: null,
-      },
-    });
+    handleContentMessage(createSceneMessage("done") as never);
 
     expect(getOverlayRoot()?.textContent).toContain("done");
     observer.disconnect();
   });
 
-  test("renders broadcast state updates on non-target pages without publishing site signals", async () => {
-    const sendMessage = vi.fn(async () => undefined);
+  test("renders mirrored scene updates on non-target pages without publishing page signals", async () => {
+    const sendMessage = vi.fn(async () => createSceneMessage("waiting"));
     vi.stubGlobal("chrome", {
       runtime: {
         sendMessage,
@@ -73,90 +104,9 @@ describe("content and overlay flow", () => {
 
     bootstrapContentScript(dom.window.document);
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({ type: messageTypes.currentDisplayState });
-    });
-
-    handleContentMessage({
-      type: messageTypes.stateUpdate,
-      payload: {
-        state: "waiting",
-        visible: true,
-        pet: null,
-      },
+      expect(sendMessage).toHaveBeenCalledWith({ type: messageTypes.currentSceneState });
     });
 
     expect(getOverlayRoot()?.textContent).toContain("waiting");
-  });
-
-  test("promotes DeepSeek state when network activity starts and settles", async () => {
-    const sendMessage = vi.fn(async () => undefined);
-    vi.stubGlobal("chrome", {
-      runtime: {
-        sendMessage,
-        onMessage: {
-          addListener: vi.fn(),
-        },
-      },
-    });
-    const dom = new JSDOM(`<textarea></textarea><button>Send</button>`, {
-      url: "https://chat.deepseek.com/",
-    });
-    Object.defineProperty(dom.window.document, "readyState", {
-      value: "complete",
-      configurable: true,
-    });
-
-    bootstrapContentScript(dom.window.document);
-    dom.window.dispatchEvent(new dom.window.CustomEvent("openpet:network-start"));
-
-    await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: messageTypes.pageSignals,
-          payload: expect.objectContaining({
-            sendTriggered: true,
-            responseGrowing: true,
-          }),
-        })
-      );
-    });
-
-    dom.window.dispatchEvent(new dom.window.CustomEvent("openpet:network-end"));
-    await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: messageTypes.pageSignals,
-          payload: expect.objectContaining({
-            sendTriggered: true,
-          }),
-        })
-      );
-    });
-
-    vi.advanceTimersByTime(1700);
-    await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: messageTypes.pageSignals,
-          payload: expect.objectContaining({
-            settled: true,
-          }),
-        })
-      );
-    });
-
-    vi.advanceTimersByTime(1300);
-    await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          type: messageTypes.pageSignals,
-          payload: expect.objectContaining({
-            sendTriggered: false,
-            responseGrowing: false,
-            settled: false,
-          }),
-        })
-      );
-    });
   });
 });

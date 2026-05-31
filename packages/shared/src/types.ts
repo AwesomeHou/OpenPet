@@ -23,8 +23,12 @@ export const petActionNames = [
 
 export type PetActionName = (typeof petActionNames)[number];
 
+export const siteIds = ["deepseek", "gemini"] as const;
+
+export type SiteId = (typeof siteIds)[number];
+
 export interface RawPageSignals {
-  site: "deepseek";
+  site: SiteId;
   composerReady: boolean;
   sendTriggered: boolean;
   responseGrowing: boolean;
@@ -56,10 +60,24 @@ export interface OverlayPlacement {
   facing: "left" | "right";
 }
 
+export interface ScenePetState {
+  petId: string;
+  siteId: SiteId;
+  tabId: number;
+  state: NormalizedState;
+  pet: StoredPetRecord;
+  placement: OverlayPlacement;
+}
+
+export interface OverlaySceneState {
+  pets: ScenePetState[];
+  visible: boolean;
+}
+
 export interface TabPetState {
   tabId: number;
   url: string;
-  site: "deepseek";
+  site: SiteId;
   state: NormalizedState;
   updatedAt: number;
 }

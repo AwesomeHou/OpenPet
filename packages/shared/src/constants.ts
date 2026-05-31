@@ -1,8 +1,8 @@
 export const storageKeys = {
   pets: "openpet.pets",
-  selectedPetId: "openpet.selectedPetId",
+  sitePetBindings: "openpet.sitePetBindings",
   overlayVisible: "openpet.overlayVisible",
-  overlayPlacement: "openpet.overlayPlacement",
+  overlayPlacements: "openpet.overlayPlacements",
 } as const;
 
 export const overlayRootId = "openpet-overlay-root";

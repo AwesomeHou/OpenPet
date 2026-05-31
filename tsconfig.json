@@ -8,6 +8,7 @@
     "lib": ["ES2022", "DOM"],
     "types": ["node", "chrome", "vitest/globals"],
     "paths": {
+      "@openpet/adapters": ["./packages/adapters/src/index.ts"],
       "@openpet/shared/*": ["./packages/shared/src/*"],
       "@openpet/state/*": ["./packages/state/src/*"],
       "@openpet/pet-assets/*": ["./packages/pet-assets/src/*"],

@@ -1,15 +1,21 @@
-import type { NormalizedState, RawPageSignals, StoredPetRecord, TabPetState } from "./types";
+import type {
+  OverlaySceneState,
+  RawPageSignals,
+  SiteId,
+  TabPetState,
+} from "./types";
 
 export const messageTypes = {
   pageSignals: "openpet/page-signals",
   stateUpdate: "openpet/state-update",
+  sceneUpdate: "openpet/scene-update",
   focusTab: "openpet/focus-tab",
   importPet: "openpet/import-pet",
-  selectPet: "openpet/select-pet",
+  setSitePetBinding: "openpet/set-site-pet-binding",
   clearPets: "openpet/clear-pets",
   toggleOverlay: "openpet/toggle-overlay",
   popupSnapshot: "openpet/popup-snapshot",
-  currentDisplayState: "openpet/current-display-state",
+  currentSceneState: "openpet/current-scene-state",
 } as const;
 
 export interface PageSignalsMessage {
@@ -21,14 +27,23 @@ export interface PageSignalsMessage {
 export interface StateUpdateMessage {
   type: typeof messageTypes.stateUpdate;
   payload: {
-    state: NormalizedState;
-    pet: StoredPetRecord | null;
+    scene: OverlaySceneState;
+  };
+}
+
+export interface SceneUpdateMessage {
+  type: typeof messageTypes.sceneUpdate;
+  payload: {
+    scene: OverlaySceneState;
     visible: boolean;
   };
 }
 
 export interface FocusTabMessage {
   type: typeof messageTypes.focusTab;
+  payload?: {
+    tabId?: number;
+  };
 }
 
 export interface ImportPetMessage {
@@ -46,9 +61,10 @@ export interface ToggleOverlayMessage {
   };
 }
 
-export interface SelectPetMessage {
-  type: typeof messageTypes.selectPet;
+export interface SetSitePetBindingMessage {
+  type: typeof messageTypes.setSitePetBinding;
   payload: {
+    siteId: SiteId;
     petId: string;
   };
 }
@@ -61,23 +77,24 @@ export interface PopupSnapshotMessage {
   type: typeof messageTypes.popupSnapshot;
   payload: {
     currentTab: TabPetState | null;
-    pets: StoredPetRecord[];
-    selectedPetId: string | null;
+    pets: Array<{ id: string; displayName: string }>;
+    sitePetBindings: Partial<Record<SiteId, string>>;
     overlayVisible: boolean;
   };
 }
 
-export interface CurrentDisplayStateMessage {
-  type: typeof messageTypes.currentDisplayState;
+export interface CurrentSceneStateMessage {
+  type: typeof messageTypes.currentSceneState;
 }
 
 export type OpenPetMessage =
   | PageSignalsMessage
   | StateUpdateMessage
+  | SceneUpdateMessage
   | FocusTabMessage
   | ImportPetMessage
-  | SelectPetMessage
+  | SetSitePetBindingMessage
   | ClearPetsMessage
   | ToggleOverlayMessage
   | PopupSnapshotMessage
-  | CurrentDisplayStateMessage;
+  | CurrentSceneStateMessage;

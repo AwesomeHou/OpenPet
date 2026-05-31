@@ -5,43 +5,46 @@ async function requestSnapshot() {
 }
 
 type PopupSnapshot = {
-  currentTab: { state: string } | null;
+  currentTab: { state: string; site?: string } | null;
   pets: Array<{ id: string; displayName: string }>;
-  selectedPetId: string | null;
+  sitePetBindings: Partial<Record<"deepseek" | "gemini", string>>;
   overlayVisible: boolean;
 };
 
-type PopupPet = PopupSnapshot["pets"][number];
-
 export function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
-  const selectedPetName =
-    snapshot.pets.find((pet) => pet.id === snapshot.selectedPetId)?.displayName ?? "none";
   const petOptions = snapshot.pets.length
     ? snapshot.pets
         .map(
           (pet) => `
-        <option value="${pet.id}" ${pet.id === snapshot.selectedPetId ? "selected" : ""}>
+        <option value="${pet.id}">
           ${pet.displayName}
         </option>
       `
         )
         .join("")
     : `<option value="" selected>No imported pets</option>`;
+  const currentSite = snapshot.currentTab?.site ?? "not detected";
 
   root.innerHTML = `
     <div style="padding: 14px; width: 320px; display: grid; gap: 12px;">
       <div>
         <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">OpenPet</div>
         <div style="font-size: 12px; margin-bottom: 6px;">State: ${snapshot.currentTab?.state ?? "not detected"}</div>
-        <div style="font-size: 12px;">Selected pet: ${selectedPetName}</div>
+        <div style="font-size: 12px;">Current site: ${currentSite}</div>
       </div>
       <label style="display: grid; gap: 6px; font-size: 12px;">
         <input id="overlay-toggle" type="checkbox" ${snapshot.overlayVisible ? "checked" : ""}/>
         Overlay visible
       </label>
       <label style="display: grid; gap: 6px; font-size: 12px;">
-        Current pet
-        <select id="pet-select" ${snapshot.pets.length ? "" : "disabled"} style="padding: 6px; font: inherit;">
+        DeepSeek pet
+        <select id="binding-deepseek" ${snapshot.pets.length ? "" : "disabled"} style="padding: 6px; font: inherit;">
+          ${petOptions}
+        </select>
+      </label>
+      <label style="display: grid; gap: 6px; font-size: 12px;">
+        Gemini pet
+        <select id="binding-gemini" ${snapshot.pets.length ? "" : "disabled"} style="padding: 6px; font: inherit;">
           ${petOptions}
         </select>
       </label>
@@ -93,28 +96,34 @@ export function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     }
   });
 
-  root
-    .querySelector<HTMLSelectElement>("#pet-select")
-    ?.addEventListener("change", async (event) => {
-      const select = event.currentTarget as HTMLSelectElement;
-      if (!select.value) {
+  const bindSelector = (selector: string, siteId: "deepseek" | "gemini") => {
+    const select = root.querySelector<HTMLSelectElement>(selector);
+    if (!select) {
+      return;
+    }
+
+    select.value = snapshot.sitePetBindings[siteId] ?? "";
+    select.addEventListener("change", async (event) => {
+      const target = event.currentTarget as HTMLSelectElement;
+      if (!target.value) {
         return;
       }
 
       await chrome.runtime.sendMessage({
-        type: messageTypes.selectPet,
-        payload: { petId: select.value },
+        type: messageTypes.setSitePetBinding,
+        payload: { siteId, petId: target.value },
       });
       const nextSnapshot = await requestSnapshot();
       renderPopup(root, nextSnapshot);
       const status = root.querySelector<HTMLElement>("#status");
       if (status) {
-        status.textContent = `Selected ${
-          nextSnapshot.pets.find((pet: PopupPet) => pet.id === select.value)?.displayName ??
-          select.value
-        }`;
+        status.textContent = `Bound ${siteId} to ${target.value}`;
       }
     });
+  };
+
+  bindSelector("#binding-deepseek", "deepseek");
+  bindSelector("#binding-gemini", "gemini");
 
   root.querySelector<HTMLButtonElement>("#clear-cache")?.addEventListener("click", async () => {
     await chrome.runtime.sendMessage({ type: messageTypes.clearPets });

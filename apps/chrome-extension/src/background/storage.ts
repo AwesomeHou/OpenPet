@@ -1,4 +1,4 @@
-import type { StoredPetRecord } from "@openpet/shared/types";
+import type { OverlayPlacement, SiteId, StoredPetRecord } from "@openpet/shared/types";
 import { storageKeys } from "@openpet/shared/constants";
 
 type StorageArea = Pick<chrome.storage.StorageArea, "get" | "set" | "remove">;
@@ -27,29 +27,48 @@ export class OpenPetStorage {
     const pets = await this.getPets();
     const nextPets = [...pets.filter((pet) => pet.id !== record.id), record];
     await this.requireArea().set({ [storageKeys.pets]: nextPets });
-    await this.ensureSelectedPet(record.id);
   }
 
-  async getSelectedPetId(): Promise<string | null> {
-    const result = await this.requireArea().get(storageKeys.selectedPetId);
-    return typeof result[storageKeys.selectedPetId] === "string"
-      ? result[storageKeys.selectedPetId]
-      : null;
+  async getSitePetBindings(): Promise<Partial<Record<SiteId, string>>> {
+    const result = await this.requireArea().get(storageKeys.sitePetBindings);
+    const bindings = result[storageKeys.sitePetBindings];
+    return bindings && typeof bindings === "object" ? (bindings as Partial<Record<SiteId, string>>) : {};
   }
 
-  async setSelectedPetId(petId: string): Promise<void> {
-    await this.requireArea().set({ [storageKeys.selectedPetId]: petId });
+  async setSitePetBinding(siteId: SiteId, petId: string): Promise<void> {
+    const bindings = await this.getSitePetBindings();
+    await this.requireArea().set({
+      [storageKeys.sitePetBindings]: {
+        ...bindings,
+        [siteId]: petId,
+      },
+    });
   }
 
-  async clearSelectedPetId(): Promise<void> {
-    await this.requireArea().remove(storageKeys.selectedPetId);
+  async clearSitePetBindings(): Promise<void> {
+    await this.requireArea().remove(storageKeys.sitePetBindings);
   }
 
-  async ensureSelectedPet(petId: string): Promise<void> {
-    const existing = await this.getSelectedPetId();
-    if (!existing) {
-      await this.setSelectedPetId(petId);
-    }
+  async getOverlayPlacements(): Promise<Partial<Record<SiteId, OverlayPlacement>>> {
+    const result = await this.requireArea().get(storageKeys.overlayPlacements);
+    const placements = result[storageKeys.overlayPlacements];
+    return placements && typeof placements === "object"
+      ? (placements as Partial<Record<SiteId, OverlayPlacement>>)
+      : {};
+  }
+
+  async getOverlayPlacement(siteId: SiteId): Promise<OverlayPlacement | null> {
+    return (await this.getOverlayPlacements())[siteId] ?? null;
+  }
+
+  async setOverlayPlacement(siteId: SiteId, placement: OverlayPlacement): Promise<void> {
+    const placements = await this.getOverlayPlacements();
+    await this.requireArea().set({
+      [storageKeys.overlayPlacements]: {
+        ...placements,
+        [siteId]: placement,
+      },
+    });
   }
 
   async isOverlayVisible(): Promise<boolean> {
@@ -63,6 +82,6 @@ export class OpenPetStorage {
 
   async clearPets(): Promise<void> {
     await this.requireArea().remove(storageKeys.pets);
-    await this.clearSelectedPetId();
+    await this.clearSitePetBindings();
   }
 }

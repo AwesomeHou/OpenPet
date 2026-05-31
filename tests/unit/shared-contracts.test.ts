@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { messageTypes } from "@openpet/shared/messages";
-import { normalizedStates, petActionNames } from "@openpet/shared/types";
+import { normalizedStates, petActionNames, siteIds } from "@openpet/shared/types";
 
 describe("shared contracts", () => {
   test("normalized states stay within the PRD state set", () => {
@@ -24,5 +24,15 @@ describe("shared contracts", () => {
   test("message types remain stable", () => {
     expect(messageTypes.importPet).toBe("openpet/import-pet");
     expect(messageTypes.stateUpdate).toBe("openpet/state-update");
+  });
+
+  test("site identifiers remain aligned with the supported multi-pet rollout", () => {
+    expect(siteIds).toEqual(["deepseek", "gemini"]);
+  });
+
+  test("scene update messages remain stable", () => {
+    expect(messageTypes.sceneUpdate).toBe("openpet/scene-update");
+    expect(messageTypes.currentSceneState).toBe("openpet/current-scene-state");
+    expect(messageTypes.setSitePetBinding).toBe("openpet/set-site-pet-binding");
   });
 });

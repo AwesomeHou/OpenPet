@@ -7,26 +7,28 @@ describe("popup flow", () => {
     document.body.innerHTML = `<div id="app"></div>`;
   });
 
-  test("renders current state and selected pet from snapshot", () => {
+  test("renders current state and site bindings from snapshot", () => {
     const root = document.getElementById("app")!;
     renderPopup(root, {
-      currentTab: { state: "thinking" },
-      pets: [{ id: "boba", displayName: "Boba" }],
-      selectedPetId: "boba",
+      currentTab: { state: "thinking", site: "gemini" },
+      pets: [{ id: "boba", displayName: "Boba" }, { id: "doodlebob", displayName: "Doodle Bob" }],
+      sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
       overlayVisible: true,
     });
 
     expect(root.textContent).toContain("State: thinking");
-    expect(root.textContent).toContain("Selected pet: Boba");
+    expect(root.textContent).toContain("Current site: gemini");
+    expect(root.textContent).toContain("DeepSeek pet");
+    expect(root.textContent).toContain("Gemini pet");
   });
 
   test("requests snapshot on mount and toggles overlay visibility", async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === messageTypes.popupSnapshot) {
         return {
-          currentTab: { state: "idle" },
+          currentTab: { state: "idle", site: "deepseek" },
           pets: [],
-          selectedPetId: null,
+          sitePetBindings: {},
           overlayVisible: true,
         };
       }
@@ -55,13 +57,16 @@ describe("popup flow", () => {
     });
   });
 
-  test("allows selecting a pet and clearing the local pet cache", async () => {
-    const sendMessage = vi.fn(async (message: { type: string; payload?: { petId?: string } }) => {
+  test("allows rebinding DeepSeek and Gemini pets", async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === messageTypes.popupSnapshot) {
         return {
-          currentTab: { state: "idle" },
-          pets: [{ id: "boba", displayName: "Boba" }],
-          selectedPetId: "boba",
+          currentTab: { state: "idle", site: "deepseek" },
+          pets: [
+            { id: "boba", displayName: "Boba" },
+            { id: "doodlebob", displayName: "Doodle Bob" },
+          ],
+          sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
           overlayVisible: true,
         };
       }
@@ -76,31 +81,32 @@ describe("popup flow", () => {
 
     const root = document.getElementById("app")!;
     renderPopup(root, {
-      currentTab: { state: "idle" },
+      currentTab: { state: "idle", site: "deepseek" },
       pets: [
         { id: "boba", displayName: "Boba" },
-        { id: "mochi", displayName: "Mochi" },
+        { id: "doodlebob", displayName: "Doodle Bob" },
       ],
-      selectedPetId: "boba",
+      sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
       overlayVisible: true,
     });
 
-    const select = root.querySelector("#pet-select") as HTMLSelectElement;
-    select.value = "mochi";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    const deepseekSelect = root.querySelector("#binding-deepseek") as HTMLSelectElement;
+    deepseekSelect.value = "doodlebob";
+    deepseekSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const geminiSelect = root.querySelector("#binding-gemini") as HTMLSelectElement;
+    geminiSelect.value = "boba";
+    geminiSelect.dispatchEvent(new Event("change", { bubbles: true }));
 
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
-        type: messageTypes.selectPet,
-        payload: { petId: "mochi" },
+        type: messageTypes.setSitePetBinding,
+        payload: { siteId: "deepseek", petId: "doodlebob" },
       });
-    });
-
-    const clearButton = root.querySelector("#clear-cache") as HTMLButtonElement;
-    clearButton.click();
-
-    await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({ type: messageTypes.clearPets });
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setSitePetBinding,
+        payload: { siteId: "gemini", petId: "boba" },
+      });
     });
   });
 });

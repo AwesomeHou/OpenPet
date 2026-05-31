@@ -1,10 +1,18 @@
 import type {
+  FocusTabMessage,
   OpenPetMessage,
   PopupSnapshotMessage,
-  StateUpdateMessage,
+  SceneUpdateMessage,
 } from "@openpet/shared/messages";
 import { messageTypes } from "@openpet/shared/messages";
-import type { StoredPetRecord, TabPetState } from "@openpet/shared/types";
+import type {
+  OverlayPlacement,
+  OverlaySceneState,
+  ScenePetState,
+  SiteId,
+  StoredPetRecord,
+  TabPetState,
+} from "@openpet/shared/types";
 import { createTabState } from "@openpet/state/sessionState";
 import { importPetFromZip } from "@openpet/pet-assets/importPet";
 import { OpenPetStorage } from "./storage";
@@ -13,55 +21,78 @@ type ChromeTabsApi = Pick<typeof chrome.tabs, "sendMessage" | "update" | "query"
 
 const storage = new OpenPetStorage();
 const tabState = new Map<number, TabPetState>();
-let lastKnownTabId: number | null = null;
+const defaultPlacements: Record<SiteId, OverlayPlacement> = {
+  deepseek: { left: 16, top: 16, facing: "right" },
+  gemini: { left: 160, top: 16, facing: "right" },
+};
 
-async function getSelectedPet(storageRepo: OpenPetStorage): Promise<StoredPetRecord | null> {
-  const [pets, selectedPetId] = await Promise.all([
-    storageRepo.getPets(),
-    storageRepo.getSelectedPetId(),
-  ]);
-  return pets.find((pet) => pet.id === selectedPetId) ?? pets[0] ?? null;
-}
-
-function resolveDisplayTabId(
-  requestedTabId: number,
+function buildScenePets(
+  pets: StoredPetRecord[],
+  bindings: Partial<Record<SiteId, string>>,
   stateMap: Map<number, TabPetState>,
-  fallbackTabId: number | null
-): number | null {
-  if (stateMap.has(requestedTabId)) {
-    return requestedTabId;
-  }
+  placements: Partial<Record<SiteId, OverlayPlacement>>
+): ScenePetState[] {
+  const petsById = new Map(pets.map((pet) => [pet.id, pet]));
+  const siteOrder: SiteId[] = ["deepseek", "gemini"];
 
-  if (fallbackTabId !== null && stateMap.has(fallbackTabId)) {
-    return fallbackTabId;
-  }
+  return siteOrder
+    .map((siteId) => {
+      const session = [...stateMap.values()]
+        .filter((entry) => entry.site === siteId)
+        .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+      const petId = bindings[siteId];
+      const pet = petId ? petsById.get(petId) : undefined;
+      if (!session || !pet) {
+        return null;
+      }
 
-  return [...stateMap.keys()][0] ?? null;
+      return {
+        petId,
+        siteId,
+        tabId: session.tabId,
+        state: session.state,
+        pet,
+        placement: placements[siteId] ?? defaultPlacements[siteId],
+      } satisfies ScenePetState;
+    })
+    .filter((pet): pet is ScenePetState => pet !== null);
 }
 
-export async function publishState(
+async function buildScene(
+  storageRepo: OpenPetStorage,
+  stateMap: Map<number, TabPetState>
+): Promise<OverlaySceneState> {
+  const [pets, bindings, visible, placements] = await Promise.all([
+    storageRepo.getPets(),
+    storageRepo.getSitePetBindings(),
+    storageRepo.isOverlayVisible(),
+    storageRepo.getOverlayPlacements(),
+  ]);
+
+  return {
+    pets: buildScenePets(pets, bindings, stateMap, placements),
+    visible,
+  };
+}
+
+export async function publishScene(
   tabId: number,
   options: {
     storageRepo?: OpenPetStorage;
     tabsApi?: ChromeTabsApi;
     tabStateMap?: Map<number, TabPetState>;
-    fallbackTabId?: number | null;
   } = {}
 ): Promise<void> {
   const storageRepo = options.storageRepo ?? storage;
   const tabsApi = options.tabsApi ?? chrome.tabs;
   const stateMap = options.tabStateMap ?? tabState;
-  const displayTabId = resolveDisplayTabId(
-    tabId,
-    stateMap,
-    options.fallbackTabId ?? lastKnownTabId
-  );
-  const pet = await getSelectedPet(storageRepo);
-  const visible = await storageRepo.isOverlayVisible();
-  const state = displayTabId ? (stateMap.get(displayTabId)?.state ?? "waiting") : "waiting";
-  const message: StateUpdateMessage = {
-    type: messageTypes.stateUpdate,
-    payload: { state, pet, visible },
+  const scene = await buildScene(storageRepo, stateMap);
+  const message: SceneUpdateMessage = {
+    type: messageTypes.sceneUpdate,
+    payload: {
+      scene,
+      visible: scene.visible,
+    },
   };
   await tabsApi.sendMessage(tabId, message).catch(() => undefined);
 }
@@ -69,26 +100,18 @@ export async function publishState(
 async function publishKnownTabs(
   storageRepo: OpenPetStorage,
   tabsApi: ChromeTabsApi,
-  stateMap: Map<number, TabPetState>,
-  fallbackTabId: number | null
+  stateMap: Map<number, TabPetState>
 ): Promise<void> {
-  const activeTabs = await tabsApi.query({ active: true, currentWindow: true }).catch(() => []);
+  const knownTabs = await tabsApi.query({}).catch(() => []);
   const targetTabIds = new Set<number>([
     ...stateMap.keys(),
-    ...activeTabs
+    ...knownTabs
       .map((tab) => tab.id)
       .filter((tabId): tabId is number => typeof tabId === "number"),
   ]);
 
   await Promise.all(
-    [...targetTabIds].map((tabId) =>
-      publishState(tabId, {
-        storageRepo,
-        tabsApi,
-        tabStateMap: stateMap,
-        fallbackTabId,
-      })
-    )
+    [...targetTabIds].map((tabId) => publishScene(tabId, { storageRepo, tabsApi, tabStateMap: stateMap }))
   );
 }
 
@@ -97,19 +120,11 @@ export function createMessageHandler(
     storageRepo?: OpenPetStorage;
     tabsApi?: ChromeTabsApi;
     tabStateMap?: Map<number, TabPetState>;
-    getLastKnownTabId?: () => number | null;
-    setLastKnownTabId?: (tabId: number) => void;
   } = {}
 ) {
   const storageRepo = deps.storageRepo ?? storage;
   const tabsApi = deps.tabsApi ?? chrome.tabs;
   const stateMap = deps.tabStateMap ?? tabState;
-  const getKnownTabId = deps.getLastKnownTabId ?? (() => lastKnownTabId);
-  const setKnownTabId =
-    deps.setLastKnownTabId ??
-    ((tabId: number) => {
-      lastKnownTabId = tabId;
-    });
 
   return (
     message: OpenPetMessage,
@@ -123,19 +138,13 @@ export function createMessageHandler(
         JSON.stringify(message.payload)
       );
       stateMap.set(sender.tab.id, createTabState(sender.tab.id, sender.tab.url, message.payload));
-      setKnownTabId(sender.tab.id);
-      void publishState(sender.tab.id, {
-        storageRepo,
-        tabsApi,
-        tabStateMap: stateMap,
-        fallbackTabId: getKnownTabId(),
-      });
+      void publishKnownTabs(storageRepo, tabsApi, stateMap);
       return;
     }
 
     if (message.type === messageTypes.focusTab) {
-      const targetTabId =
-        sender.tab?.id && stateMap.has(sender.tab.id) ? sender.tab.id : getKnownTabId();
+      const focusMessage = message as FocusTabMessage;
+      const targetTabId = focusMessage.payload?.tabId ?? sender.tab?.id;
       console.debug("[openpet-background] focusTab", targetTabId);
       if (targetTabId) {
         void tabsApi.update(targetTabId, { active: true });
@@ -148,7 +157,14 @@ export function createMessageHandler(
       void importPetFromZip(bytes)
         .then(async (pet) => {
           await storageRepo.savePet(pet);
-          await publishKnownTabs(storageRepo, tabsApi, stateMap, getKnownTabId());
+          const bindings = await storageRepo.getSitePetBindings();
+          if (!bindings.gemini && pet.id === "doodlebob") {
+            await storageRepo.setSitePetBinding("gemini", pet.id);
+          }
+          if (!bindings.deepseek) {
+            await storageRepo.setSitePetBinding("deepseek", pet.id);
+          }
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
           sendResponse({ ok: true, petId: pet.id });
         })
         .catch((error: Error) => {
@@ -157,9 +173,9 @@ export function createMessageHandler(
       return true;
     }
 
-    if (message.type === messageTypes.selectPet) {
-      void storageRepo.setSelectedPetId(message.payload.petId).then(async () => {
-        await publishKnownTabs(storageRepo, tabsApi, stateMap, getKnownTabId());
+    if (message.type === messageTypes.setSitePetBinding) {
+      void storageRepo.setSitePetBinding(message.payload.siteId, message.payload.petId).then(async () => {
+        await publishKnownTabs(storageRepo, tabsApi, stateMap);
         sendResponse({ ok: true });
       });
       return true;
@@ -167,7 +183,7 @@ export function createMessageHandler(
 
     if (message.type === messageTypes.clearPets) {
       void storageRepo.clearPets().then(async () => {
-        await publishKnownTabs(storageRepo, tabsApi, stateMap, getKnownTabId());
+        await publishKnownTabs(storageRepo, tabsApi, stateMap);
         sendResponse({ ok: true });
       });
       return true;
@@ -175,7 +191,7 @@ export function createMessageHandler(
 
     if (message.type === messageTypes.toggleOverlay) {
       void storageRepo.setOverlayVisible(message.payload.visible).then(() => {
-        void publishKnownTabs(storageRepo, tabsApi, stateMap, getKnownTabId());
+        void publishKnownTabs(storageRepo, tabsApi, stateMap);
         sendResponse({ ok: true });
       });
       return true;
@@ -185,22 +201,22 @@ export function createMessageHandler(
       void Promise.all([
         tabsApi.query({ active: true, currentWindow: true }),
         storageRepo.getPets(),
-        storageRepo.getSelectedPetId(),
+        storageRepo.getSitePetBindings(),
         storageRepo.isOverlayVisible(),
-      ]).then(([tabs, pets, selectedPetId, overlayVisible]) => {
-        const currentTabId = tabs[0]?.id && stateMap.has(tabs[0].id) ? tabs[0].id : getKnownTabId();
+      ]).then(([tabs, pets, sitePetBindings, overlayVisible]) => {
+        const currentTabId = tabs[0]?.id && stateMap.has(tabs[0].id) ? tabs[0].id : null;
         const snapshot: PopupSnapshotMessage["payload"] = {
           currentTab: currentTabId ? (stateMap.get(currentTabId) ?? null) : null,
-          pets,
-          selectedPetId,
+          pets: pets.map((pet) => ({ id: pet.id, displayName: pet.displayName })),
+          sitePetBindings,
           overlayVisible,
         };
         console.debug(
           "[openpet-background] popupSnapshot",
           JSON.stringify({
             currentTab: snapshot.currentTab,
-            pets: snapshot.pets.map((pet) => ({ id: pet.id, displayName: pet.displayName })),
-            selectedPetId: snapshot.selectedPetId,
+            pets: snapshot.pets,
+            sitePetBindings: snapshot.sitePetBindings,
             overlayVisible: snapshot.overlayVisible,
           })
         );
@@ -209,22 +225,15 @@ export function createMessageHandler(
       return true;
     }
 
-    if (message.type === messageTypes.currentDisplayState && sender.tab?.id) {
-      void Promise.all([
-        storageRepo.getPets(),
-        storageRepo.getSelectedPetId(),
-        storageRepo.isOverlayVisible(),
-      ]).then(([pets, selectedPetId, visible]) => {
-        const pet = pets.find((item) => item.id === selectedPetId) ?? pets[0] ?? null;
-        const displayTabId = resolveDisplayTabId(sender.tab?.id ?? 0, stateMap, getKnownTabId());
+    if (message.type === messageTypes.currentSceneState && sender.tab?.id) {
+      void buildScene(storageRepo, stateMap).then((scene) => {
         sendResponse({
-          type: messageTypes.stateUpdate,
+          type: messageTypes.sceneUpdate,
           payload: {
-            state: displayTabId ? (stateMap.get(displayTabId)?.state ?? "waiting") : "waiting",
-            pet,
-            visible,
+            scene,
+            visible: scene.visible,
           },
-        } satisfies StateUpdateMessage);
+        } satisfies SceneUpdateMessage);
       });
       return true;
     }
@@ -237,12 +246,16 @@ export function registerBackgroundListeners(): void {
   });
   chrome.runtime.onMessage.addListener(createMessageHandler());
   chrome.tabs.onActivated.addListener(({ tabId }) => {
-    void publishState(tabId, { fallbackTabId: lastKnownTabId });
+    void publishScene(tabId);
   });
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.status === "complete") {
-      void publishState(tabId, { fallbackTabId: lastKnownTabId });
+      void publishScene(tabId);
     }
+  });
+  chrome.tabs.onRemoved?.addListener((tabId) => {
+    tabState.delete(tabId);
+    void publishKnownTabs(storage, chrome.tabs, tabState);
   });
 }
 
