@@ -49,3 +49,8 @@ await fs.copyFile(
   path.join(root, "apps/chrome-extension/popup.html"),
   path.join(distDir, "popup.html")
 );
+await fs.cp(
+  path.join(root, "apps/chrome-extension/assets"),
+  path.join(distDir, "assets"),
+  { recursive: true }
+);

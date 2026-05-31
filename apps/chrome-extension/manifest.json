@@ -5,12 +5,22 @@
   "description": "A local-first pet status system for AI chat workflows.",
   "permissions": ["storage", "tabs"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://*/*", "http://*/*"],
+  "icons": {
+    "16": "assets/icons/openpet-16.png",
+    "32": "assets/icons/openpet-32.png",
+    "48": "assets/icons/openpet-48.png",
+    "128": "assets/icons/openpet-128.png"
+  },
   "background": {
     "service_worker": "assets/background.js",
     "type": "module"
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icons/openpet-16.png",
+      "32": "assets/icons/openpet-32.png"
+    }
   },
   "content_scripts": [
     {
