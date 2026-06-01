@@ -1,16 +1,21 @@
-# OpenPet PNG Logo Usage
+# OpenPet Logo Usage
+
+- 品牌主稿：
+  - `E:/OpenPet/assets/brand/openpet-logo-master.png`
+  - 这是全项目共享的正式 logo 源文件，供 Chrome 扩展以及未来桌面端、移动端继续沿用
 
 - `openpet-logo-transparent.png`
-  - 透明背景主稿
-  - 用于扩展图标、网页、文档、README、截图叠加、深浅不同背景上的自由摆放
+  - 当前唯一采用的主稿
+  - 由仓库级品牌主稿同步而来
+  - 用于扩展图标、网页、文档、README、截图叠加，以及所有需要透明背景的场景
 
-- `openpet-logo-with-background.png`
-  - 带品牌底色版本
-  - 用于展示图、汇报图、海报、封面、商店素材或需要固定品牌氛围的场景
+当前采用的是“开口宠物轮廓”这版主稿。
 
-当前 Chrome 扩展图标从透明背景主稿导出。
+当前 Chrome 扩展图标全部从这张透明主稿导出：
 
-- `assets/icons/openpet-toolbar-16.png`
-- `assets/icons/openpet-toolbar-32.png`
-  - 备选的 Chrome 扩展工具栏小图标优化版
-  - 当前默认未启用，保留用于后续对比或再次切换
+- `assets/icons/openpet-16.png`
+- `assets/icons/openpet-32.png`
+- `assets/icons/openpet-48.png`
+- `assets/icons/openpet-128.png`
+
+当前不再保留旧背景稿或工具栏专用备选图标。
