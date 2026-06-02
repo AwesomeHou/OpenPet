@@ -67,6 +67,7 @@ export interface ScenePetState {
   state: NormalizedState;
   pet: StoredPetRecord;
   placement: OverlayPlacement;
+  size: number;
 }
 
 export interface OverlaySceneState {

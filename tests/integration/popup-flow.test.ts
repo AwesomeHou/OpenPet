@@ -4,12 +4,12 @@ import { messageTypes } from "@openpet/shared/messages";
 import { storageKeys } from "@openpet/shared/constants";
 
 const defaultSnapshot = {
-  currentTab: { state: "thinking", site: "gemini" },
   pets: [
-    { id: "boba", displayName: "Boba" },
-    { id: "doodlebob", displayName: "Doodle Bob" },
+    { id: "boba", displayName: "Boba", boundSites: ["deepseek"] },
+    { id: "doodlebob", displayName: "Doodle Bob", boundSites: ["gemini"] },
   ],
   sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
+  sitePetVisibility: { deepseek: true, gemini: true },
   overlayVisible: true,
 } as const;
 
@@ -70,10 +70,7 @@ describe("popup flow", () => {
 
     await mountPopup(root);
 
-    expect(root.textContent).toContain("当前状态");
-    expect(root.textContent).toContain("思考中");
-    expect(root.textContent).toContain("当前站点");
-    expect(root.textContent).toContain("Gemini");
+    expect(root.textContent).not.toContain("当前状态");
     expect(root.textContent).toContain("清空宠物数据");
     expect(root.textContent).toContain("宠物商店");
     expect(root.textContent).toContain("管理宠物");
@@ -85,7 +82,7 @@ describe("popup flow", () => {
     const root = document.getElementById("app")!;
 
     await mountPopup(root);
-    expect(root.textContent).toContain("Current state");
+    expect(root.textContent).toContain("Site bindings");
 
     const localeButton = root.querySelector<HTMLButtonElement>('[data-locale="zh"]')!;
     localeButton.click();
@@ -94,11 +91,11 @@ describe("popup flow", () => {
       expect(chromeMock.storage.local.set).toHaveBeenCalledWith({
         [storageKeys.popupLocale]: "zh",
       });
-      expect(root.textContent).toContain("当前状态");
+      expect(root.textContent).toContain("站点绑定");
     });
 
     renderPopup(root, defaultSnapshot);
-    expect(root.textContent).toContain("当前状态");
+    expect(root.textContent).toContain("站点绑定");
   });
 
   test("requests snapshot on mount and toggles overlay visibility", async () => {
@@ -107,9 +104,9 @@ describe("popup flow", () => {
       sendMessage: vi.fn(async (message: { type: string }) => {
         if (message.type === messageTypes.popupSnapshot) {
           return {
-            currentTab: { state: "idle", site: "deepseek" },
             pets: [],
             sitePetBindings: {},
+            sitePetVisibility: {},
             overlayVisible: true,
           };
         }
@@ -160,10 +157,55 @@ describe("popup flow", () => {
     });
   });
 
-  test("shows localized clear pet data copy and keeps future actions inert", async () => {
+  test("supports explicit unbound option and independent site visibility toggles", async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === messageTypes.popupSnapshot) {
-        return defaultSnapshot;
+        return {
+          ...defaultSnapshot,
+          sitePetVisibility: { deepseek: false, gemini: true },
+        };
+      }
+
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const deepseekSelect = root.querySelector("#binding-deepseek") as HTMLSelectElement;
+    expect([...deepseekSelect.options].some((option) => option.value === "")).toBe(true);
+    deepseekSelect.value = "";
+    deepseekSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const deepseekVisibility = root.querySelector("#visibility-deepseek") as HTMLInputElement;
+    expect(deepseekVisibility.checked).toBe(false);
+    deepseekVisibility.checked = true;
+    deepseekVisibility.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setSitePetBinding,
+        payload: { siteId: "deepseek", petId: null },
+      });
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setSitePetVisibility,
+        payload: { siteId: "deepseek", visible: true },
+      });
+    });
+  });
+
+  test("navigates to manage pets and supports paginated cross-page batch selection", async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return {
+          ...defaultSnapshot,
+          pets: Array.from({ length: 10 }, (_, index) => ({
+            id: `pet-${index + 1}`,
+            displayName: `Pet ${index + 1}`,
+            boundSites: index === 0 ? ["deepseek"] : [],
+          })),
+        };
       }
 
       return { ok: true };
@@ -172,33 +214,41 @@ describe("popup flow", () => {
 
     const root = document.getElementById("app")!;
     await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#manage-pets")?.click();
 
-    expect(root.textContent).toContain("Clear pet data");
+    expect(root.textContent).toContain("Manage Pets");
+    expect(root.querySelectorAll('[data-pet-card="true"]')).toHaveLength(9);
 
-    const storeButton = root.querySelector("#pet-store") as HTMLButtonElement;
-    const manageButton = root.querySelector("#manage-pets") as HTMLButtonElement;
-    storeButton.click();
-    manageButton.click();
+    (root.querySelector('[data-pet-select="pet-1"]') as HTMLInputElement).click();
+    root.querySelector<HTMLButtonElement>("#manage-next-page")?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector("#manage-page-indicator")?.textContent).toContain("2 / 2");
+    });
+    (root.querySelector('[data-pet-select="pet-10"]') as HTMLInputElement).click();
+    expect(root.querySelector("#manage-selection-count")?.textContent).toContain("2");
 
-    root.querySelector<HTMLButtonElement>("#clear-cache")?.click();
+    root.querySelector<HTMLButtonElement>("#manage-delete-selected")?.click();
 
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({ type: messageTypes.clearPets });
-      expect(root.querySelector("#status")?.textContent).toContain("Cleared pet data");
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.deletePets,
+        payload: { petIds: ["pet-1", "pet-10"] },
+      });
     });
-
-    expect(sendMessage).not.toHaveBeenCalledWith(
-      expect.objectContaining({ type: "openpet/pet-store" })
-    );
   });
 
-  test("supports drag and drop import through the upload field", async () => {
-    const sendMessage = vi.fn(async (message: { type: string; payload?: { filename?: string } }) => {
+  test("supports batch import through drag and drop with aggregate feedback", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { files?: Array<{ filename: string }> } }) => {
       if (message.type === messageTypes.popupSnapshot) {
         return defaultSnapshot;
       }
-      if (message.type === messageTypes.importPet) {
-        return { ok: true, petId: "doodlebob" };
+      if (message.type === messageTypes.batchImportPets) {
+        return {
+          ok: true,
+          importedPetIds: ["doodlebob"],
+          overwrittenPetIds: ["boba"],
+          failures: [{ filename: "broken.zip", error: "Invalid pet package" }],
+        };
       }
 
       return { ok: true };
@@ -209,10 +259,14 @@ describe("popup flow", () => {
     await mountPopup(root);
 
     const dropzone = root.querySelector("#pet-dropzone") as HTMLLabelElement;
-    const file = new File(["zip"], "doodlebob.zip", { type: "application/zip" });
+    const files = [
+      new File(["zip"], "doodlebob.zip", { type: "application/zip" }),
+      new File(["zip"], "boba.zip", { type: "application/zip" }),
+      new File(["zip"], "broken.zip", { type: "application/zip" }),
+    ];
     const dragEvent = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
     Object.defineProperty(dragEvent, "dataTransfer", {
-      value: { files: [file] },
+      value: { files },
       configurable: true,
     });
 
@@ -220,10 +274,18 @@ describe("popup flow", () => {
 
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
-        type: messageTypes.importPet,
-        payload: expect.objectContaining({ filename: "doodlebob.zip" }),
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: expect.arrayContaining([
+            expect.objectContaining({ filename: "doodlebob.zip" }),
+            expect.objectContaining({ filename: "boba.zip" }),
+            expect.objectContaining({ filename: "broken.zip" }),
+          ]),
+        },
       });
-      expect(root.querySelector("#status")?.textContent).toContain("Imported Doodle Bob");
+      expect(root.querySelector("#status")?.textContent).toContain("Imported 1");
+      expect(root.querySelector("#status")?.textContent).toContain("Overwritten 1");
+      expect(root.querySelector("#status")?.textContent).toContain("Failed 1");
     });
   });
 });

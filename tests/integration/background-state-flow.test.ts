@@ -17,13 +17,17 @@ function createStorageStub(
   overrides: Partial<{
     pets: StoredPetRecord[];
     sitePetBindings: Partial<Record<"deepseek" | "gemini", string>>;
+    sitePetVisibility: Partial<Record<"deepseek" | "gemini", boolean>>;
     overlayVisible: boolean;
+    petSizes: Partial<Record<"deepseek" | "gemini", number>>;
   }> = {}
 ) {
   const state = {
     pets: overrides.pets ?? [],
     sitePetBindings: overrides.sitePetBindings ?? {},
+    sitePetVisibility: overrides.sitePetVisibility ?? {},
     overlayVisible: overrides.overlayVisible ?? true,
+    petSizes: overrides.petSizes ?? {},
   };
 
   return {
@@ -35,15 +39,30 @@ function createStorageStub(
     setSitePetBinding: vi.fn(async (siteId: "deepseek" | "gemini", petId: string) => {
       state.sitePetBindings = { ...state.sitePetBindings, [siteId]: petId };
     }),
+    getSitePetVisibility: vi.fn(async () => state.sitePetVisibility),
+    setSitePetVisibility: vi.fn(async (siteId: "deepseek" | "gemini", visible: boolean) => {
+      state.sitePetVisibility = { ...state.sitePetVisibility, [siteId]: visible };
+    }),
     clearSitePetBindings: vi.fn(async () => {
       state.sitePetBindings = {};
     }),
     getOverlayPlacements: vi.fn(async () => ({})),
     getOverlayPlacement: vi.fn(async () => null),
     setOverlayPlacement: vi.fn(async () => undefined),
+    getPetSizes: vi.fn(async () => state.petSizes),
+    getPetSize: vi.fn(async (siteId: "deepseek" | "gemini") => state.petSizes[siteId] ?? null),
+    setPetSize: vi.fn(async (siteId: "deepseek" | "gemini", size: number) => {
+      state.petSizes = { ...state.petSizes, [siteId]: size };
+    }),
     isOverlayVisible: vi.fn(async () => state.overlayVisible),
     setOverlayVisible: vi.fn(async (visible: boolean) => {
       state.overlayVisible = visible;
+    }),
+    deletePets: vi.fn(async (petIds: string[]) => {
+      state.pets = state.pets.filter((pet) => !petIds.includes(pet.id));
+      state.sitePetBindings = Object.fromEntries(
+        Object.entries(state.sitePetBindings).filter(([, petId]) => !petIds.includes(petId))
+      ) as Partial<Record<"deepseek" | "gemini", string>>;
     }),
     clearPets: vi.fn(async () => {
       state.pets = [];
@@ -140,7 +159,7 @@ describe("background message flow", () => {
     });
   });
 
-  test("returns popup snapshot with site bindings instead of a selected pet", async () => {
+  test("returns popup snapshot with site bindings and pet-first summaries", async () => {
     const tabsApi = {
       sendMessage: vi.fn(async () => undefined),
       update: vi.fn(async () => undefined),
@@ -191,11 +210,15 @@ describe("background message flow", () => {
     await vi.waitFor(() => {
       expect(sendResponse).toHaveBeenCalledWith(
         expect.objectContaining({
-          currentTab: expect.objectContaining({ state: "done", site: "gemini" }),
+          pets: expect.arrayContaining([
+            expect.objectContaining({ id: "boba", boundSites: ["deepseek"] }),
+            expect.objectContaining({ id: "doodlebob", boundSites: ["gemini"] }),
+          ]),
           sitePetBindings: {
             deepseek: "boba",
             gemini: "doodlebob",
           },
+          sitePetVisibility: {},
           overlayVisible: false,
         })
       );
@@ -263,6 +286,211 @@ describe("background message flow", () => {
         })
       );
       expect(sendResponse).toHaveBeenCalledWith({ ok: true });
+    });
+  });
+
+  test("supports unbinding a site and hiding a site pet from the scene", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const tabsApi = {
+      sendMessage,
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 7 }, { id: 8 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [createPet("boba", "Boba"), createPet("doodlebob", "Doodle Bob")],
+      sitePetBindings: {
+        deepseek: "boba",
+        gemini: "doodlebob",
+      },
+      sitePetVisibility: {
+        deepseek: true,
+        gemini: true,
+      },
+      overlayVisible: true,
+    });
+    const stateMap = new Map<number, TabPetState>([
+      [
+        7,
+        {
+          tabId: 7,
+          url: "https://chat.deepseek.com/",
+          site: "deepseek",
+          state: "thinking",
+          updatedAt: 1,
+        },
+      ],
+      [
+        8,
+        {
+          tabId: 8,
+          url: "https://gemini.google.com/app",
+          site: "gemini",
+          state: "streaming",
+          updatedAt: 2,
+        },
+      ],
+    ]);
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: stateMap,
+    });
+
+    handler(
+      {
+        type: messageTypes.setSitePetBinding,
+        payload: { siteId: "gemini", petId: null },
+      },
+      {} as chrome.runtime.MessageSender,
+      vi.fn()
+    );
+
+    await vi.waitFor(() => {
+      expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("gemini", null);
+    });
+
+    handler(
+      {
+        type: messageTypes.setSitePetVisibility,
+        payload: { siteId: "deepseek", visible: false },
+      },
+      {} as chrome.runtime.MessageSender,
+      vi.fn()
+    );
+
+    await vi.waitFor(() => {
+      expect(storageRepo.setSitePetVisibility).toHaveBeenCalledWith("deepseek", false);
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        8,
+        expect.objectContaining({
+          type: messageTypes.sceneUpdate,
+          payload: expect.objectContaining({
+            scene: expect.objectContaining({
+              pets: [],
+            }),
+          }),
+        })
+      );
+    });
+  });
+
+  test("returns popup snapshot with visibility state and bound sites for each pet", async () => {
+    const tabsApi = {
+      sendMessage: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 7 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [createPet("boba", "Boba"), createPet("doodlebob", "Doodle Bob")],
+      sitePetBindings: {
+        deepseek: "boba",
+      },
+      sitePetVisibility: {
+        deepseek: false,
+      },
+      overlayVisible: true,
+    });
+    const stateMap = new Map<number, TabPetState>();
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: stateMap,
+    });
+    const sendResponse = vi.fn();
+
+    handler(
+      {
+        type: messageTypes.popupSnapshot,
+        payload: {
+          currentTab: null,
+          pets: [],
+          sitePetBindings: {},
+          overlayVisible: true,
+        },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith(
+        expect.objectContaining({
+          sitePetVisibility: {
+            deepseek: false,
+          },
+          pets: expect.arrayContaining([
+            expect.objectContaining({ id: "boba", boundSites: ["deepseek"] }),
+            expect.objectContaining({ id: "doodlebob", boundSites: [] }),
+          ]),
+        })
+      );
+    });
+  });
+
+  test("deletes multiple pets and clears their site bindings", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const tabsApi = {
+      sendMessage,
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 7 }, { id: 8 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [createPet("boba", "Boba"), createPet("doodlebob", "Doodle Bob")],
+      sitePetBindings: {
+        deepseek: "boba",
+        gemini: "doodlebob",
+      },
+      overlayVisible: true,
+    });
+    const stateMap = new Map<number, TabPetState>([
+      [
+        7,
+        {
+          tabId: 7,
+          url: "https://chat.deepseek.com/",
+          site: "deepseek",
+          state: "thinking",
+          updatedAt: 1,
+        },
+      ],
+      [
+        8,
+        {
+          tabId: 8,
+          url: "https://gemini.google.com/app",
+          site: "gemini",
+          state: "streaming",
+          updatedAt: 2,
+        },
+      ],
+    ]);
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: stateMap,
+    });
+
+    handler(
+      {
+        type: messageTypes.deletePets,
+        payload: { petIds: ["boba", "doodlebob"] },
+      },
+      {} as chrome.runtime.MessageSender,
+      vi.fn()
+    );
+
+    await vi.waitFor(() => {
+      expect(storageRepo.deletePets).toHaveBeenCalledWith(["boba", "doodlebob"]);
+      expect(sendMessage).toHaveBeenLastCalledWith(
+        8,
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            scene: expect.objectContaining({
+              pets: [],
+            }),
+          }),
+        })
+      );
     });
   });
 

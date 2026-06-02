@@ -11,7 +11,10 @@ export const messageTypes = {
   sceneUpdate: "openpet/scene-update",
   focusTab: "openpet/focus-tab",
   importPet: "openpet/import-pet",
+  batchImportPets: "openpet/batch-import-pets",
   setSitePetBinding: "openpet/set-site-pet-binding",
+  setSitePetVisibility: "openpet/set-site-pet-visibility",
+  deletePets: "openpet/delete-pets",
   clearPets: "openpet/clear-pets",
   toggleOverlay: "openpet/toggle-overlay",
   popupSnapshot: "openpet/popup-snapshot",
@@ -54,6 +57,16 @@ export interface ImportPetMessage {
   };
 }
 
+export interface BatchImportPetsMessage {
+  type: typeof messageTypes.batchImportPets;
+  payload: {
+    files: Array<{
+      bytes: number[];
+      filename: string;
+    }>;
+  };
+}
+
 export interface ToggleOverlayMessage {
   type: typeof messageTypes.toggleOverlay;
   payload: {
@@ -65,7 +78,22 @@ export interface SetSitePetBindingMessage {
   type: typeof messageTypes.setSitePetBinding;
   payload: {
     siteId: SiteId;
-    petId: string;
+    petId: string | null;
+  };
+}
+
+export interface SetSitePetVisibilityMessage {
+  type: typeof messageTypes.setSitePetVisibility;
+  payload: {
+    siteId: SiteId;
+    visible: boolean;
+  };
+}
+
+export interface DeletePetsMessage {
+  type: typeof messageTypes.deletePets;
+  payload: {
+    petIds: string[];
   };
 }
 
@@ -76,9 +104,9 @@ export interface ClearPetsMessage {
 export interface PopupSnapshotMessage {
   type: typeof messageTypes.popupSnapshot;
   payload: {
-    currentTab: TabPetState | null;
-    pets: Array<{ id: string; displayName: string }>;
+    pets: Array<{ id: string; displayName: string; boundSites: SiteId[] }>;
     sitePetBindings: Partial<Record<SiteId, string>>;
+    sitePetVisibility: Partial<Record<SiteId, boolean>>;
     overlayVisible: boolean;
   };
 }
@@ -93,7 +121,10 @@ export type OpenPetMessage =
   | SceneUpdateMessage
   | FocusTabMessage
   | ImportPetMessage
+  | BatchImportPetsMessage
   | SetSitePetBindingMessage
+  | SetSitePetVisibilityMessage
+  | DeletePetsMessage
   | ClearPetsMessage
   | ToggleOverlayMessage
   | PopupSnapshotMessage

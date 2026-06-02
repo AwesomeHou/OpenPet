@@ -1,8 +1,12 @@
 import type {
+  BatchImportPetsMessage,
+  DeletePetsMessage,
   FocusTabMessage,
   OpenPetMessage,
   PopupSnapshotMessage,
   SceneUpdateMessage,
+  SetSitePetBindingMessage,
+  SetSitePetVisibilityMessage,
 } from "@openpet/shared/messages";
 import { messageTypes } from "@openpet/shared/messages";
 import type {
@@ -15,6 +19,7 @@ import type {
 } from "@openpet/shared/types";
 import { createTabState } from "@openpet/state/sessionState";
 import { importPetFromZip } from "@openpet/pet-assets/importPet";
+import { defaultPetSize } from "@openpet/shared/constants";
 import { OpenPetStorage } from "./storage";
 
 type ChromeTabsApi = Pick<typeof chrome.tabs, "sendMessage" | "update" | "query">;
@@ -29,8 +34,10 @@ const defaultPlacements: Record<SiteId, OverlayPlacement> = {
 function buildScenePets(
   pets: StoredPetRecord[],
   bindings: Partial<Record<SiteId, string>>,
+  visibility: Partial<Record<SiteId, boolean>>,
   stateMap: Map<number, TabPetState>,
-  placements: Partial<Record<SiteId, OverlayPlacement>>
+  placements: Partial<Record<SiteId, OverlayPlacement>>,
+  petSizes: Partial<Record<SiteId, number>>
 ): ScenePetState[] {
   const petsById = new Map(pets.map((pet) => [pet.id, pet]));
   const siteOrder: SiteId[] = ["deepseek", "gemini"];
@@ -42,7 +49,7 @@ function buildScenePets(
         .sort((left, right) => right.updatedAt - left.updatedAt)[0];
       const petId = bindings[siteId];
       const pet = petId ? petsById.get(petId) : undefined;
-      if (!session || !pet) {
+      if (!session || !pet || visibility[siteId] === false) {
         return null;
       }
 
@@ -53,6 +60,7 @@ function buildScenePets(
         state: session.state,
         pet,
         placement: placements[siteId] ?? defaultPlacements[siteId],
+        size: petSizes[siteId] ?? defaultPetSize,
       } satisfies ScenePetState;
     })
     .filter((pet): pet is ScenePetState => pet !== null);
@@ -62,17 +70,43 @@ async function buildScene(
   storageRepo: OpenPetStorage,
   stateMap: Map<number, TabPetState>
 ): Promise<OverlaySceneState> {
-  const [pets, bindings, visible, placements] = await Promise.all([
+  const [pets, bindings, visibility, visible, placements, petSizes] = await Promise.all([
     storageRepo.getPets(),
     storageRepo.getSitePetBindings(),
+    storageRepo.getSitePetVisibility(),
     storageRepo.isOverlayVisible(),
     storageRepo.getOverlayPlacements(),
+    storageRepo.getPetSizes(),
   ]);
 
   return {
-    pets: buildScenePets(pets, bindings, stateMap, placements),
+    pets: buildScenePets(pets, bindings, visibility, stateMap, placements, petSizes),
     visible,
   };
+}
+
+function createPopupPets(
+  pets: StoredPetRecord[],
+  sitePetBindings: Partial<Record<SiteId, string>>
+): PopupSnapshotMessage["payload"]["pets"] {
+  return pets.map((pet) => ({
+    id: pet.id,
+    displayName: pet.displayName,
+    boundSites: (Object.entries(sitePetBindings) as Array<[SiteId, string]>)
+      .filter(([, petId]) => petId === pet.id)
+      .map(([siteId]) => siteId),
+  }));
+}
+
+async function assignDefaultBindings(storageRepo: OpenPetStorage, petId: string): Promise<void> {
+  const bindings = await storageRepo.getSitePetBindings();
+  if (!bindings.deepseek) {
+    await storageRepo.setSitePetBinding("deepseek", petId);
+    return;
+  }
+  if (!bindings.gemini && petId === "doodlebob") {
+    await storageRepo.setSitePetBinding("gemini", petId);
+  }
 }
 
 export async function publishScene(
@@ -157,13 +191,7 @@ export function createMessageHandler(
       void importPetFromZip(bytes)
         .then(async (pet) => {
           await storageRepo.savePet(pet);
-          const bindings = await storageRepo.getSitePetBindings();
-          if (!bindings.gemini && pet.id === "doodlebob") {
-            await storageRepo.setSitePetBinding("gemini", pet.id);
-          }
-          if (!bindings.deepseek) {
-            await storageRepo.setSitePetBinding("deepseek", pet.id);
-          }
+          await assignDefaultBindings(storageRepo, pet.id);
           await publishKnownTabs(storageRepo, tabsApi, stateMap);
           sendResponse({ ok: true, petId: pet.id });
         })
@@ -173,8 +201,67 @@ export function createMessageHandler(
       return true;
     }
 
+    if (message.type === messageTypes.batchImportPets) {
+      const batchMessage = message as BatchImportPetsMessage;
+      void (async () => {
+        const existingPetIds = new Set((await storageRepo.getPets()).map((pet) => pet.id));
+        const importedPetIds: string[] = [];
+        const overwrittenPetIds: string[] = [];
+        const failures: Array<{ filename: string; error: string }> = [];
+
+        for (const file of batchMessage.payload.files) {
+          try {
+            const pet = await importPetFromZip(Uint8Array.from(file.bytes));
+            if (existingPetIds.has(pet.id)) {
+              overwrittenPetIds.push(pet.id);
+            } else {
+              importedPetIds.push(pet.id);
+              existingPetIds.add(pet.id);
+            }
+            await storageRepo.savePet(pet);
+            await assignDefaultBindings(storageRepo, pet.id);
+          } catch (error) {
+            failures.push({
+              filename: file.filename,
+              error: error instanceof Error ? error.message : "Unknown import failure",
+            });
+          }
+        }
+
+        await publishKnownTabs(storageRepo, tabsApi, stateMap);
+        sendResponse({
+          ok: true,
+          importedPetIds,
+          overwrittenPetIds,
+          failures,
+        });
+      })();
+      return true;
+    }
+
     if (message.type === messageTypes.setSitePetBinding) {
-      void storageRepo.setSitePetBinding(message.payload.siteId, message.payload.petId).then(async () => {
+      const bindingMessage = message as SetSitePetBindingMessage;
+      void storageRepo.setSitePetBinding(bindingMessage.payload.siteId, bindingMessage.payload.petId).then(async () => {
+        await publishKnownTabs(storageRepo, tabsApi, stateMap);
+        sendResponse({ ok: true });
+      });
+      return true;
+    }
+
+    if (message.type === messageTypes.setSitePetVisibility) {
+      const visibilityMessage = message as SetSitePetVisibilityMessage;
+      void storageRepo
+        .setSitePetVisibility(visibilityMessage.payload.siteId, visibilityMessage.payload.visible)
+        .then(async () => {
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({ ok: true });
+        });
+      return true;
+    }
+
+    if (message.type === messageTypes.deletePets) {
+      const deleteMessage = message as DeletePetsMessage;
+      void storageRepo.deletePets(deleteMessage.payload.petIds).then(async () => {
         await publishKnownTabs(storageRepo, tabsApi, stateMap);
         sendResponse({ ok: true });
       });
@@ -199,24 +286,23 @@ export function createMessageHandler(
 
     if (message.type === messageTypes.popupSnapshot) {
       void Promise.all([
-        tabsApi.query({ active: true, currentWindow: true }),
         storageRepo.getPets(),
         storageRepo.getSitePetBindings(),
+        storageRepo.getSitePetVisibility(),
         storageRepo.isOverlayVisible(),
-      ]).then(([tabs, pets, sitePetBindings, overlayVisible]) => {
-        const currentTabId = tabs[0]?.id && stateMap.has(tabs[0].id) ? tabs[0].id : null;
+      ]).then(([pets, sitePetBindings, sitePetVisibility, overlayVisible]) => {
         const snapshot: PopupSnapshotMessage["payload"] = {
-          currentTab: currentTabId ? (stateMap.get(currentTabId) ?? null) : null,
-          pets: pets.map((pet) => ({ id: pet.id, displayName: pet.displayName })),
+          pets: createPopupPets(pets, sitePetBindings),
           sitePetBindings,
+          sitePetVisibility,
           overlayVisible,
         };
         console.debug(
           "[openpet-background] popupSnapshot",
           JSON.stringify({
-            currentTab: snapshot.currentTab,
             pets: snapshot.pets,
             sitePetBindings: snapshot.sitePetBindings,
+            sitePetVisibility: snapshot.sitePetVisibility,
             overlayVisible: snapshot.overlayVisible,
           })
         );

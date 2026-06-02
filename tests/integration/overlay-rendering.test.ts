@@ -4,6 +4,7 @@ import {
   getOverlayRoot,
 } from "../../apps/chrome-extension/src/overlay/renderOverlay";
 import { messageTypes } from "@openpet/shared/messages";
+import { maxPetSize, minPetSize } from "@openpet/shared/constants";
 
 function createSceneUpdate() {
   return {
@@ -114,6 +115,7 @@ describe("overlay rendering", () => {
     expect(root?.textContent).toContain("thinking");
     expect(root?.textContent).toContain("streaming");
     expect(root?.querySelector<HTMLElement>('[data-pet-id="doodlebob"] .openpet-sprite')?.style.backgroundImage).toContain("data:image/webp");
+    expect(root?.querySelector<HTMLElement>('[data-pet-id="boba"] .openpet-sprite')?.style.backgroundSize).toBe("768px 936px");
   });
 
   test("dispatches focus messages with the clicked pet tab id", async () => {
@@ -236,7 +238,7 @@ describe("overlay rendering", () => {
     expect(button.style.top).toBe("58px");
   });
 
-  test("uses hover running animation while the pointer is over a pet", () => {
+  test("uses hover jumping animation while the pointer is over a pet", () => {
     applyOverlayUpdate(createSceneUpdate());
 
     const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
@@ -246,11 +248,29 @@ describe("overlay rendering", () => {
 
     button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
 
-    expect(sprite.dataset.action).toBe("running");
+    expect(sprite.dataset.action).toBe("jumping");
 
     button.onpointerleave?.(new Event("pointerleave") as PointerEvent);
 
     expect(sprite.dataset.action).toBe("review");
+  });
+
+  test("keeps frame offsets aligned after pet resize", () => {
+    const message = createSceneUpdate();
+    message.payload.scene.pets[0] = {
+      ...message.payload.scene.pets[0],
+      size: 144,
+    };
+
+    applyOverlayUpdate(message);
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
+
+    expect(sprite.style.backgroundPosition).toBe("0px -1248px");
+
+    button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
+    expect(sprite.style.backgroundPosition).toBe("0px -624px");
   });
 
   test("uses directional running animation while dragging left and right", () => {
@@ -319,5 +339,109 @@ describe("overlay rendering", () => {
 
     expect(deepseekSprite?.dataset.frame).not.toBe(initialDeepseekFrame);
     expect(geminiSprite?.dataset.action).toBe(initialGeminiAction);
+  });
+
+  test("sends a close-pet visibility update from the right-click menu", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage,
+      },
+      storage: {
+        local: {
+          get: vi.fn(async () => ({})),
+          set: vi.fn(async () => undefined),
+        },
+        onChanged: {
+          addListener: vi.fn(),
+        },
+      },
+    });
+
+    applyOverlayUpdate(createSceneUpdate());
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const contextMenuEvent = new MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 48,
+      clientY: 64,
+    });
+    button.dispatchEvent(contextMenuEvent);
+
+    const closeButton = getOverlayRoot()?.querySelector('[data-menu-action="close-pet"]') as HTMLButtonElement;
+    closeButton.click();
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setSitePetVisibility,
+        payload: { siteId: "deepseek", visible: false },
+      });
+    });
+  });
+
+  test("shows a resize handle and persists bounded size changes", async () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const root = getOverlayRoot() as HTMLDivElement;
+    const button = root.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const handle = button.querySelector('[data-resize-handle="true"]') as HTMLDivElement;
+    vi.spyOn(button, "getBoundingClientRect").mockReturnValue({
+      x: 16,
+      y: 16,
+      left: 16,
+      top: 16,
+      right: 112,
+      bottom: 120,
+      width: 96,
+      height: 104,
+      toJSON: () => undefined,
+    } as DOMRect);
+
+    button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
+    expect(handle.dataset.visible).toBe("true");
+
+    handle.onpointerdown?.(
+      createPointerEvent("pointerdown", { button: 0, pointerId: 9, clientX: 112, clientY: 120 }) as PointerEvent
+    );
+    handle.onpointermove?.(
+      createPointerEvent("pointermove", { pointerId: 9, clientX: 280, clientY: 280 }) as PointerEvent
+    );
+    handle.onpointerup?.(
+      createPointerEvent("pointerup", { pointerId: 9, clientX: 280, clientY: 280 }) as PointerEvent
+    );
+
+    await vi.waitFor(() => {
+      expect((button.querySelector(".openpet-sprite") as HTMLElement).style.width).toBe(`${maxPetSize}px`);
+    });
+
+    handle.onpointerdown?.(
+      createPointerEvent("pointerdown", { button: 0, pointerId: 10, clientX: 112, clientY: 120 }) as PointerEvent
+    );
+    handle.onpointermove?.(
+      createPointerEvent("pointermove", { pointerId: 10, clientX: -200, clientY: -200 }) as PointerEvent
+    );
+    handle.onpointerup?.(
+      createPointerEvent("pointerup", { pointerId: 10, clientX: -200, clientY: -200 }) as PointerEvent
+    );
+
+    await vi.waitFor(() => {
+      expect((button.querySelector(".openpet-sprite") as HTMLElement).style.width).toBe(`${minPetSize}px`);
+    });
+
+    applyOverlayUpdate({
+      ...createSceneUpdate(),
+      payload: {
+        ...createSceneUpdate().payload,
+        scene: {
+          ...createSceneUpdate().payload.scene,
+          pets: createSceneUpdate().payload.scene.pets.map((pet) =>
+            pet.petId === "boba" ? { ...pet, size: minPetSize } : pet
+          ),
+        },
+      },
+    });
+
+    expect((button.querySelector(".openpet-sprite") as HTMLElement).style.width).toBe(`${minPetSize}px`);
   });
 });

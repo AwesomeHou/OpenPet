@@ -1,45 +1,44 @@
-import { storageKeys } from "@openpet/shared/constants";
-import { messageTypes, type ImportPetMessage, type OpenPetMessage } from "@openpet/shared/messages";
+import { managePetsPageSize, storageKeys } from "@openpet/shared/constants";
+import { messageTypes, type OpenPetMessage } from "@openpet/shared/messages";
+import type { SiteId } from "@openpet/shared/types";
 
 type PopupLocale = "zh" | "en";
-type SiteId = "deepseek" | "gemini";
 type PopupSnapshot = {
-  currentTab: { state: string; site?: string } | null;
-  pets: Array<{ id: string; displayName: string }>;
+  pets: Array<{ id: string; displayName: string; boundSites: SiteId[] }>;
   sitePetBindings: Partial<Record<SiteId, string>>;
+  sitePetVisibility: Partial<Record<SiteId, boolean>>;
   overlayVisible: boolean;
 };
+
+type PopupPage = "home" | "manage";
 
 type PopupViewState = {
   locale: PopupLocale;
   feedbackMessage: string;
   dragActive: boolean;
+  page: PopupPage;
+  managePageIndex: number;
+  selectedPetIds: Set<string>;
 };
+
+const popupViewState: PopupViewState = {
+  locale: "en",
+  feedbackMessage: "",
+  dragActive: false,
+  page: "home",
+  managePageIndex: 0,
+  selectedPetIds: new Set(),
+};
+
+const supportedSites: SiteId[] = ["deepseek", "gemini"];
 
 const popupStyles = `
   :root {
     color-scheme: light;
-    scrollbar-color: rgba(141, 97, 63, 0.72) rgba(109, 78, 53, 0.08);
-    scrollbar-width: thin;
   }
   html, body {
     margin: 0;
     background: transparent;
-  }
-  body::-webkit-scrollbar {
-    width: 10px;
-  }
-  body::-webkit-scrollbar-track {
-    background: rgba(109, 78, 53, 0.08);
-    border-radius: 999px;
-  }
-  body::-webkit-scrollbar-thumb {
-    background: linear-gradient(180deg, rgba(157, 111, 73, 0.9), rgba(122, 84, 55, 0.92));
-    border-radius: 999px;
-    border: 2px solid rgba(255, 248, 239, 0.92);
-  }
-  body::-webkit-scrollbar-thumb:hover {
-    background: linear-gradient(180deg, rgba(170, 120, 79, 0.96), rgba(132, 91, 60, 0.98));
   }
   .popup-shell {
     width: 352px;
@@ -51,7 +50,12 @@ const popupStyles = `
     color: #2f241b;
     font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   }
-  .popup-header {
+  .popup-header,
+  .header-row,
+  .footer-row,
+  .toggle-row,
+  .pet-card-meta,
+  .pet-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -60,7 +64,6 @@ const popupStyles = `
   .popup-title {
     font-size: 18px;
     font-weight: 700;
-    letter-spacing: 0.01em;
   }
   .locale-toggle {
     display: inline-flex;
@@ -69,29 +72,43 @@ const popupStyles = `
     border-radius: 999px;
     background: rgba(82, 57, 36, 0.08);
   }
-  .locale-toggle button {
+  .locale-toggle button,
+  .secondary-button,
+  .primary-button,
+  .icon-button,
+  .page-button,
+  .future-button {
     border: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+  .locale-toggle button {
     border-radius: 999px;
     padding: 6px 10px;
-    font: inherit;
     font-size: 12px;
     background: transparent;
     color: #6b5441;
-    cursor: pointer;
   }
   .locale-toggle button[data-active="true"] {
     background: #ffffff;
     color: #2f241b;
-    box-shadow: 0 1px 3px rgba(47, 36, 27, 0.12);
+  }
+  .feedback-banner,
+  .popup-card {
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.74);
+    box-shadow: 0 12px 30px rgba(84, 60, 41, 0.08);
+  }
+  .feedback-banner {
+    min-height: 18px;
+    padding: 12px 14px;
+    font-size: 12px;
+    color: #6a4f39;
   }
   .popup-card {
     display: grid;
     gap: 12px;
-    box-sizing: border-box;
     padding: 14px;
-    border-radius: 16px;
-    background: rgba(255, 255, 255, 0.72);
-    box-shadow: 0 12px 30px rgba(84, 60, 41, 0.08);
   }
   .card-title {
     font-size: 13px;
@@ -100,37 +117,9 @@ const popupStyles = `
     text-transform: uppercase;
     letter-spacing: 0.06em;
   }
-  .status-grid {
-    display: grid;
-    gap: 10px;
-  }
-  .status-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 12px;
-    font-size: 13px;
-  }
-  .status-row strong {
-    color: #6a4f39;
-    font-weight: 600;
-  }
-  .status-value {
-    text-align: right;
-    font-weight: 600;
-  }
-  .toggle-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    font-size: 13px;
-  }
-  .toggle-row input {
-    width: 18px;
-    height: 18px;
-    accent-color: #8d613f;
-  }
-  .field-grid {
+  .field-grid,
+  .future-grid,
+  .pet-grid {
     display: grid;
     gap: 10px;
   }
@@ -140,24 +129,29 @@ const popupStyles = `
     font-size: 13px;
     color: #4f3a2b;
   }
-  .field-label span {
+  .field-label span,
+  .toggle-row span {
     font-weight: 600;
   }
   .field-label select,
-  .action-button,
-  .future-button {
+  .secondary-button,
+  .primary-button,
+  .future-button,
+  .page-button {
     width: 100%;
     box-sizing: border-box;
-    font: inherit;
     font-size: 13px;
     border-radius: 12px;
     border: 1px solid rgba(109, 78, 53, 0.16);
     background: #fffdf9;
     color: #2f241b;
-  }
-  .field-label select,
-  .upload-dropzone {
     padding: 10px 12px;
+  }
+  .toggle-row input,
+  .pet-card-check {
+    width: 18px;
+    height: 18px;
+    accent-color: #8d613f;
   }
   .upload-input {
     position: absolute;
@@ -169,175 +163,144 @@ const popupStyles = `
   .upload-dropzone {
     display: grid;
     gap: 4px;
+    padding: 10px 12px;
     cursor: pointer;
-    border-style: dashed;
-    border-width: 1.5px;
-    border-color: rgba(141, 97, 63, 0.35);
+    border-radius: 12px;
+    border: 1.5px dashed rgba(141, 97, 63, 0.35);
     background: rgba(255, 253, 249, 0.92);
-    transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
   }
   .upload-dropzone[data-drag-active="true"] {
     border-color: rgba(141, 97, 63, 0.72);
     background: #fff8ef;
-    box-shadow: inset 0 0 0 1px rgba(141, 97, 63, 0.18);
   }
   .upload-primary {
     font-weight: 600;
   }
-  .upload-secondary {
+  .upload-secondary,
+  .helper-text,
+  .pet-card-site {
     font-size: 12px;
     color: #7d6551;
   }
-  .action-button,
-  .future-button {
-    padding: 10px 12px;
+  .pet-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
-  .action-button {
-    cursor: pointer;
-    background: #fffaf4;
+  .pet-card {
+    display: grid;
+    gap: 8px;
+    padding: 10px;
+    border-radius: 14px;
+    background: rgba(255, 251, 246, 0.96);
+    border: 1px solid rgba(141, 97, 63, 0.16);
   }
-  .action-button:disabled,
+  .pet-card-name {
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+  .pet-card-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    background: rgba(141, 97, 63, 0.12);
+    color: #6a4f39;
+  }
+  .page-button:disabled,
+  .secondary-button:disabled,
+  .primary-button:disabled,
   .future-button:disabled,
   .field-label select:disabled {
     cursor: not-allowed;
     opacity: 0.58;
   }
-  .future-grid {
-    display: grid;
-    gap: 10px;
-  }
-  .future-note {
-    font-size: 12px;
-    line-height: 1.45;
-    color: #6a4f39;
-  }
-  .feedback {
-    min-height: 18px;
-    padding: 0 4px;
-    font-size: 12px;
+  .icon-button {
+    border-radius: 999px;
+    width: 32px;
+    height: 32px;
+    background: #fffdf9;
     color: #6a4f39;
   }
 `;
 
 const localeCopy = {
   en: {
-    languageName: "English",
     title: "OpenPet",
-    currentStatus: "Current state",
-    currentSite: "Current site",
-    notDetected: "Not detected",
-    overlayVisible: "Overlay visible",
-    bindingsTitle: "Site bindings",
+    homeTitle: "Site bindings",
     dataTitle: "Pet data",
+    managePetsTitle: "Manage Pets",
+    overlayVisible: "Overlay visible",
+    petStore: "Pet Store",
+    companionNote: "For a persistent desktop experience, a companion app will be available later.",
+    importZip: "Import pet zip",
+    importDropHint: "Click or drop .zip files here",
+    clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
     geminiPet: "Gemini pet",
+    showPet: "Show pet",
+    noPet: "None",
     noImportedPets: "No imported pets",
-    importZip: "Import pet zip",
-    importDropHint: "Click or drop a .zip file here",
-    clearPetData: "Clear pet data",
-    futureTitle: "Coming next",
-    petStore: "Pet Store",
-    managePets: "Manage Pets",
-    comingSoon: "Coming soon",
-    companionNote: "For a persistent desktop experience, a companion app will be available later.",
-    importedFeedback: "Imported {pet}",
-    importFailedFeedback: "Import failed: {error}",
+    importedSummary: "Imported {imported} · Overwritten {overwritten} · Failed {failed}",
+    importedFailure: "Import failed: {error}",
     boundFeedback: "Bound {site} to {pet}",
+    unboundFeedback: "Cleared {site} binding",
+    visibilityFeedback: "{site} display {state}",
+    deletedFeedback: "Deleted {count} pets",
     clearPetDataFeedback: "Cleared pet data",
-    operationFailed: "Action failed. Please try again.",
-    states: {
-      idle: "Idle",
-      thinking: "Thinking",
-      streaming: "Responding",
-      waiting: "Waiting",
-      error: "Error",
-      done: "Done",
-    },
+    back: "Back",
+    unbound: "Unbound",
+    selectedCount: "Selected {count}",
+    deleteSelected: "Delete selected",
+    previousPage: "Previous",
+    nextPage: "Next",
+    manageHint: "Pet-first view with paging and batch delete.",
+    displayOn: "on",
+    displayOff: "off",
     sites: {
       deepseek: "DeepSeek",
       gemini: "Gemini",
     },
   },
   zh: {
-    languageName: "中文",
     title: "OpenPet",
-    currentStatus: "当前状态",
-    currentSite: "当前站点",
-    notDetected: "未检测到",
-    overlayVisible: "显示宠物浮层",
-    bindingsTitle: "站点绑定",
+    homeTitle: "站点绑定",
     dataTitle: "宠物数据",
+    managePetsTitle: "管理宠物",
+    overlayVisible: "显示宠物浮层",
+    petStore: "宠物商店",
+    companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
+    importZip: "导入宠物 zip",
+    importDropHint: "点击选择或将多个 .zip 文件拖到这里",
+    clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
     geminiPet: "Gemini 宠物",
+    showPet: "显示宠物",
+    noPet: "无",
     noImportedPets: "暂无已导入宠物",
-    importZip: "导入宠物 zip",
-    importDropHint: "点击选择或将 .zip 文件拖到这里",
-    clearPetData: "清空宠物数据",
-    futureTitle: "后续能力",
-    petStore: "宠物商店",
-    managePets: "管理宠物",
-    comingSoon: "即将支持",
-    companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
-    importedFeedback: "已导入 {pet}",
-    importFailedFeedback: "导入失败：{error}",
+    importedSummary: "成功导入 {imported} · 已覆盖 {overwritten} · 失败 {failed}",
+    importedFailure: "导入失败：{error}",
     boundFeedback: "已将 {site} 绑定到 {pet}",
+    unboundFeedback: "已清除 {site} 绑定",
+    visibilityFeedback: "{site} 显示已{state}",
+    deletedFeedback: "已删除 {count} 只宠物",
     clearPetDataFeedback: "已清空宠物数据",
-    operationFailed: "操作失败，请重试。",
-    states: {
-      idle: "空闲中",
-      thinking: "思考中",
-      streaming: "输出中",
-      waiting: "等待中",
-      error: "出错了",
-      done: "已完成",
-    },
+    back: "返回",
+    unbound: "未绑定",
+    selectedCount: "已选 {count}",
+    deleteSelected: "删除已选",
+    previousPage: "上一页",
+    nextPage: "下一页",
+    manageHint: "按宠物查看站点绑定，支持分页与批量删除。",
+    displayOn: "开启",
+    displayOff: "关闭",
     sites: {
       deepseek: "DeepSeek",
       gemini: "Gemini",
     },
   },
 } as const;
-
-const popupViewState: PopupViewState = {
-  locale: "en",
-  feedbackMessage: "",
-  dragActive: false,
-};
-
-async function requestSnapshot() {
-  return chrome.runtime.sendMessage({ type: messageTypes.popupSnapshot } as OpenPetMessage);
-}
-
-async function importPetFile(root: HTMLElement, snapshot: PopupSnapshot, file: File): Promise<void> {
-  try {
-    const buffer =
-      typeof file.arrayBuffer === "function"
-        ? await file.arrayBuffer()
-        : await new Response(file).arrayBuffer();
-    const bytes = Array.from(new Uint8Array(buffer));
-    const message: ImportPetMessage = {
-      type: messageTypes.importPet,
-      payload: { bytes, filename: file.name },
-    };
-    const result = await chrome.runtime.sendMessage(message);
-    if (!result.ok) {
-      popupViewState.feedbackMessage = translate(popupViewState.locale, "importFailedFeedback", {
-        error: result.error ?? localeCopy[popupViewState.locale].operationFailed,
-      });
-      renderPopup(root, snapshot);
-      return;
-    }
-
-    const nextSnapshot = await requestSnapshot();
-    popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFeedback", {
-      pet: getPetDisplayName(nextSnapshot, result.petId),
-    });
-    renderPopup(root, nextSnapshot);
-  } catch {
-    popupViewState.feedbackMessage = localeCopy[popupViewState.locale].operationFailed;
-    renderPopup(root, snapshot);
-  }
-}
 
 function getStorageArea(): chrome.storage.StorageArea | null {
   return globalThis.chrome?.storage?.local ?? null;
@@ -355,12 +318,9 @@ async function resolveInitialLocale(): Promise<PopupLocale> {
   if (storedLocale) {
     return normalizeLocale(storedLocale);
   }
-
-  const uiLanguage =
-    globalThis.chrome?.i18n?.getUILanguage?.() ??
-    globalThis.navigator?.language ??
-    "en-US";
-  return normalizeLocale(uiLanguage);
+  return normalizeLocale(
+    globalThis.chrome?.i18n?.getUILanguage?.() ?? globalThis.navigator?.language ?? "en-US"
+  );
 }
 
 async function persistLocale(locale: PopupLocale): Promise<void> {
@@ -380,25 +340,14 @@ function translate(
   if (typeof message !== "string") {
     return "";
   }
-
   return Object.entries(replacements ?? {}).reduce(
     (result, [name, value]) => result.replace(`{${name}}`, value),
     message
   );
 }
 
-function localizeState(locale: PopupLocale, state?: string): string {
-  if (!state) {
-    return localeCopy[locale].notDetected;
-  }
-  return localeCopy[locale].states[state as keyof (typeof localeCopy)["en"]["states"]] ?? state;
-}
-
-function localizeSite(locale: PopupLocale, site?: string): string {
-  if (!site) {
-    return localeCopy[locale].notDetected;
-  }
-  return localeCopy[locale].sites[site as keyof (typeof localeCopy)["en"]["sites"]] ?? site;
+function localizeSite(locale: PopupLocale, siteId: SiteId): string {
+  return localeCopy[locale].sites[siteId];
 }
 
 function escapeHtml(value: string): string {
@@ -414,22 +363,197 @@ function getPetDisplayName(snapshot: PopupSnapshot, petId: string): string {
   return snapshot.pets.find((pet) => pet.id === petId)?.displayName ?? petId;
 }
 
+async function requestSnapshot(): Promise<PopupSnapshot> {
+  return chrome.runtime.sendMessage({ type: messageTypes.popupSnapshot } as OpenPetMessage);
+}
+
+async function batchImportFiles(root: HTMLElement, snapshot: PopupSnapshot, files: File[]): Promise<void> {
+  if (!files.length) {
+    return;
+  }
+  try {
+    const payloadFiles = await Promise.all(
+      files.map(async (file) => {
+        const buffer =
+          typeof file.arrayBuffer === "function"
+            ? await file.arrayBuffer()
+            : await new Response(file).arrayBuffer();
+        return {
+          filename: file.name,
+          bytes: Array.from(new Uint8Array(buffer)),
+        };
+      })
+    );
+    const result = await chrome.runtime.sendMessage({
+      type: messageTypes.batchImportPets,
+      payload: { files: payloadFiles },
+    });
+    if (!result?.ok) {
+      popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFailure", {
+        error: result?.error ?? "Unknown failure",
+      });
+      renderPopup(root, snapshot);
+      return;
+    }
+
+    const nextSnapshot = await requestSnapshot();
+    popupViewState.feedbackMessage = translate(popupViewState.locale, "importedSummary", {
+      imported: String(result.importedPetIds?.length ?? 0),
+      overwritten: String(result.overwrittenPetIds?.length ?? 0),
+      failed: String(result.failures?.length ?? 0),
+    });
+    renderPopup(root, nextSnapshot);
+  } catch {
+    popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFailure", {
+      error: "Unexpected failure",
+    });
+    renderPopup(root, snapshot);
+  }
+}
+
 function createPetOptions(snapshot: PopupSnapshot, locale: PopupLocale): string {
+  const noneOption = `<option value="">${escapeHtml(localeCopy[locale].noPet)}</option>`;
   if (!snapshot.pets.length) {
-    return `<option value="" selected>${escapeHtml(localeCopy[locale].noImportedPets)}</option>`;
+    return `${noneOption}<option value="" selected>${escapeHtml(localeCopy[locale].noImportedPets)}</option>`;
   }
 
-  return snapshot.pets
-    .map(
+  return [
+    noneOption,
+    ...snapshot.pets.map(
       (pet) => `<option value="${escapeHtml(pet.id)}">${escapeHtml(pet.displayName)}</option>`
-    )
-    .join("");
+    ),
+  ].join("");
+}
+
+function clampManagePage(snapshot: PopupSnapshot): void {
+  const pageCount = Math.max(1, Math.ceil(snapshot.pets.length / managePetsPageSize));
+  popupViewState.managePageIndex = Math.min(popupViewState.managePageIndex, pageCount - 1);
+}
+
+function renderHomePage(snapshot: PopupSnapshot): string {
+  const locale = popupViewState.locale;
+  const copy = localeCopy[locale];
+  const petOptions = createPetOptions(snapshot, locale);
+  return `
+    <section class="popup-card">
+      <div class="card-title">${copy.homeTitle}</div>
+      <div class="field-grid">
+        <label class="toggle-row">
+          <span>${copy.overlayVisible}</span>
+          <input id="overlay-toggle" type="checkbox" ${snapshot.overlayVisible ? "checked" : ""} />
+        </label>
+        ${supportedSites
+          .map((siteId) => {
+            const bindingId = `binding-${siteId}`;
+            const visibilityId = `visibility-${siteId}`;
+            const petLabel = siteId === "deepseek" ? copy.deepseekPet : copy.geminiPet;
+            const selectedValue = snapshot.sitePetBindings[siteId] ?? "";
+            return `
+              <label class="field-label">
+                <span>${petLabel}</span>
+                <select id="${bindingId}" ${snapshot.pets.length ? "" : "disabled"}>
+                  ${petOptions}
+                </select>
+              </label>
+              <label class="toggle-row">
+                <span>${localizeSite(locale, siteId)} ${copy.showPet}</span>
+                <input id="${visibilityId}" type="checkbox" ${snapshot.sitePetVisibility[siteId] !== false ? "checked" : ""} />
+              </label>
+              <script type="application/json" data-binding-value="${siteId}">${escapeHtml(selectedValue)}</script>
+            `;
+          })
+          .join("")}
+      </div>
+    </section>
+
+    <section class="popup-card">
+      <div class="card-title">${copy.dataTitle}</div>
+      <div class="field-grid">
+        <div class="field-label">
+          <span>${copy.importZip}</span>
+          <input id="pet-file" class="upload-input" type="file" accept=".zip" multiple />
+          <label id="pet-dropzone" class="upload-dropzone" data-drag-active="${popupViewState.dragActive}" for="pet-file">
+            <span class="upload-primary">${copy.importZip}</span>
+            <span class="upload-secondary">${copy.importDropHint}</span>
+          </label>
+        </div>
+        <button id="manage-pets" class="secondary-button" type="button">${copy.managePetsTitle}</button>
+        <button id="clear-cache" class="secondary-button" type="button" ${snapshot.pets.length ? "" : "disabled"}>${copy.clearPetData}</button>
+      </div>
+    </section>
+
+    <section class="popup-card">
+      <div class="card-title">${copy.petStore}</div>
+      <div class="future-grid">
+        <button id="pet-store" class="future-button" type="button" disabled>${copy.petStore}</button>
+        <div class="helper-text">${copy.companionNote}</div>
+      </div>
+    </section>
+  `;
+}
+
+function renderManagePage(snapshot: PopupSnapshot): string {
+  const locale = popupViewState.locale;
+  const copy = localeCopy[locale];
+  clampManagePage(snapshot);
+  const pageCount = Math.max(1, Math.ceil(snapshot.pets.length / managePetsPageSize));
+  const start = popupViewState.managePageIndex * managePetsPageSize;
+  const pets = snapshot.pets.slice(start, start + managePetsPageSize);
+
+  return `
+    <section class="popup-card">
+      <div class="header-row">
+        <button id="manage-back" class="icon-button" type="button" aria-label="${copy.back}">←</button>
+        <div class="card-title">${copy.managePetsTitle}</div>
+        <div></div>
+      </div>
+      <div class="helper-text">${copy.manageHint}</div>
+      <div class="pet-grid">
+        ${pets
+          .map((pet) => {
+            const boundSites = pet.boundSites.length
+              ? pet.boundSites.map((siteId) => localizeSite(locale, siteId)).join(" / ")
+              : copy.unbound;
+            return `
+              <label class="pet-card" data-pet-card="true">
+                <div class="pet-card-header">
+                  <input class="pet-card-check" data-pet-select="${escapeHtml(pet.id)}" type="checkbox" ${
+                    popupViewState.selectedPetIds.has(pet.id) ? "checked" : ""
+                  } />
+                  <span class="pet-card-badge">${pet.boundSites.length ? boundSites : copy.unbound}</span>
+                </div>
+                <div class="pet-card-name">${escapeHtml(pet.displayName)}</div>
+                <div class="pet-card-site">${escapeHtml(boundSites)}</div>
+              </label>
+            `;
+          })
+          .join("")}
+      </div>
+      <div class="footer-row">
+        <button id="manage-prev-page" class="page-button" type="button" ${
+          popupViewState.managePageIndex === 0 ? "disabled" : ""
+        }>${copy.previousPage}</button>
+        <div id="manage-page-indicator">${popupViewState.managePageIndex + 1} / ${pageCount}</div>
+        <button id="manage-next-page" class="page-button" type="button" ${
+          popupViewState.managePageIndex >= pageCount - 1 ? "disabled" : ""
+        }>${copy.nextPage}</button>
+      </div>
+      <div class="footer-row">
+        <div id="manage-selection-count">${translate(locale, "selectedCount", {
+          count: String(popupViewState.selectedPetIds.size),
+        })}</div>
+        <button id="manage-delete-selected" class="primary-button" type="button" ${
+          popupViewState.selectedPetIds.size ? "" : "disabled"
+        }>${copy.deleteSelected}</button>
+      </div>
+    </section>
+  `;
 }
 
 function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   const { locale, feedbackMessage } = popupViewState;
   const copy = localeCopy[locale];
-  const petOptions = createPetOptions(snapshot, locale);
+  const body = popupViewState.page === "manage" ? renderManagePage(snapshot) : renderHomePage(snapshot);
 
   root.innerHTML = `
     <style>${popupStyles}</style>
@@ -441,76 +565,10 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
           <button id="locale-zh" type="button" data-locale="zh" data-active="${locale === "zh"}">中</button>
         </div>
       </div>
-
-      <section class="popup-card">
-        <div class="card-title">${copy.currentStatus}</div>
-        <div class="status-grid">
-          <div class="status-row">
-            <strong>${copy.currentStatus}</strong>
-            <span class="status-value">${localizeState(locale, snapshot.currentTab?.state)}</span>
-          </div>
-          <div class="status-row">
-            <strong>${copy.currentSite}</strong>
-            <span class="status-value">${localizeSite(locale, snapshot.currentTab?.site)}</span>
-          </div>
-          <label class="toggle-row">
-            <span>${copy.overlayVisible}</span>
-            <input id="overlay-toggle" type="checkbox" ${snapshot.overlayVisible ? "checked" : ""}/>
-          </label>
-        </div>
-      </section>
-
-      <section class="popup-card">
-        <div class="card-title">${copy.bindingsTitle}</div>
-        <div class="field-grid">
-          <label class="field-label">
-            <span>${copy.deepseekPet}</span>
-            <select id="binding-deepseek" ${snapshot.pets.length ? "" : "disabled"}>${petOptions}</select>
-          </label>
-          <label class="field-label">
-            <span>${copy.geminiPet}</span>
-            <select id="binding-gemini" ${snapshot.pets.length ? "" : "disabled"}>${petOptions}</select>
-          </label>
-        </div>
-      </section>
-
-      <section class="popup-card">
-        <div class="card-title">${copy.dataTitle}</div>
-        <div class="field-grid">
-          <div class="field-label">
-            <span>${copy.importZip}</span>
-            <input id="pet-file" class="upload-input" type="file" accept=".zip" />
-            <label id="pet-dropzone" class="upload-dropzone" data-drag-active="${popupViewState.dragActive}" for="pet-file">
-              <span class="upload-primary">${copy.importZip}</span>
-              <span class="upload-secondary">${copy.importDropHint}</span>
-            </label>
-          </div>
-          <button id="clear-cache" class="action-button" type="button" ${snapshot.pets.length ? "" : "disabled"}>${copy.clearPetData}</button>
-        </div>
-      </section>
-
-      <section class="popup-card">
-        <div class="card-title">${copy.futureTitle}</div>
-        <div class="future-grid">
-          <button id="pet-store" class="future-button" type="button" disabled>${copy.petStore} · ${copy.comingSoon}</button>
-          <button id="manage-pets" class="future-button" type="button" disabled>${copy.managePets} · ${copy.comingSoon}</button>
-          <div class="future-note">${copy.companionNote}</div>
-        </div>
-      </section>
-
-      <div id="status" class="feedback">${escapeHtml(feedbackMessage)}</div>
+      <div id="status" class="feedback-banner">${escapeHtml(feedbackMessage)}</div>
+      ${body}
     </div>
   `;
-
-  root
-    .querySelector<HTMLInputElement>("#overlay-toggle")
-    ?.addEventListener("change", async (event) => {
-      const target = event.currentTarget as HTMLInputElement;
-      await chrome.runtime.sendMessage({
-        type: messageTypes.toggleOverlay,
-        payload: { visible: target.checked },
-      });
-    });
 
   root.querySelectorAll<HTMLButtonElement>("[data-locale]").forEach((button) => {
     button.addEventListener("click", async () => {
@@ -524,13 +582,106 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     });
   });
 
+  if (popupViewState.page === "manage") {
+    root.querySelector("#manage-back")?.addEventListener("click", () => {
+      popupViewState.page = "home";
+      renderPopup(root, snapshot);
+    });
+    root.querySelector("#manage-prev-page")?.addEventListener("click", () => {
+      popupViewState.managePageIndex = Math.max(0, popupViewState.managePageIndex - 1);
+      renderPopup(root, snapshot);
+    });
+    root.querySelector("#manage-next-page")?.addEventListener("click", () => {
+      popupViewState.managePageIndex += 1;
+      clampManagePage(snapshot);
+      renderPopup(root, snapshot);
+    });
+    root.querySelectorAll<HTMLInputElement>("[data-pet-select]").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        const petId = checkbox.dataset.petSelect!;
+        if (checkbox.checked) {
+          popupViewState.selectedPetIds.add(petId);
+        } else {
+          popupViewState.selectedPetIds.delete(petId);
+        }
+        renderPopup(root, snapshot);
+      });
+    });
+    root.querySelector("#manage-delete-selected")?.addEventListener("click", async () => {
+      const petIds = [...popupViewState.selectedPetIds];
+      if (!petIds.length) {
+        return;
+      }
+      await chrome.runtime.sendMessage({
+        type: messageTypes.deletePets,
+        payload: { petIds },
+      });
+      popupViewState.selectedPetIds.clear();
+      popupViewState.feedbackMessage = translate(locale, "deletedFeedback", {
+        count: String(petIds.length),
+      });
+      const nextSnapshot = await requestSnapshot();
+      clampManagePage(nextSnapshot);
+      renderPopup(root, nextSnapshot);
+    });
+    return;
+  }
+
+  supportedSites.forEach((siteId) => {
+    const select = root.querySelector<HTMLSelectElement>(`#binding-${siteId}`);
+    if (select) {
+      select.value = snapshot.sitePetBindings[siteId] ?? "";
+      select.addEventListener("change", async () => {
+        const petId = select.value || null;
+        await chrome.runtime.sendMessage({
+          type: messageTypes.setSitePetBinding,
+          payload: { siteId, petId },
+        });
+        const nextSnapshot = await requestSnapshot();
+        popupViewState.feedbackMessage = petId
+          ? translate(locale, "boundFeedback", {
+              site: localizeSite(locale, siteId),
+              pet: getPetDisplayName(nextSnapshot, petId),
+            })
+          : translate(locale, "unboundFeedback", {
+              site: localizeSite(locale, siteId),
+            });
+        renderPopup(root, nextSnapshot);
+      });
+    }
+
+    const visibilityToggle = root.querySelector<HTMLInputElement>(`#visibility-${siteId}`);
+    visibilityToggle?.addEventListener("change", async () => {
+      await chrome.runtime.sendMessage({
+        type: messageTypes.setSitePetVisibility,
+        payload: { siteId, visible: visibilityToggle.checked },
+      });
+      popupViewState.feedbackMessage = translate(locale, "visibilityFeedback", {
+        site: localizeSite(locale, siteId),
+        state: visibilityToggle.checked ? copy.displayOn : copy.displayOff,
+      });
+      const nextSnapshot = await requestSnapshot();
+      renderPopup(root, nextSnapshot);
+    });
+  });
+
+  root.querySelector<HTMLInputElement>("#overlay-toggle")?.addEventListener("change", async (event) => {
+    const target = event.currentTarget as HTMLInputElement;
+    await chrome.runtime.sendMessage({
+      type: messageTypes.toggleOverlay,
+      payload: { visible: target.checked },
+    });
+  });
+
+  root.querySelector("#manage-pets")?.addEventListener("click", () => {
+    popupViewState.page = "manage";
+    clampManagePage(snapshot);
+    renderPopup(root, snapshot);
+  });
+
   root.querySelector<HTMLInputElement>("#pet-file")?.addEventListener("change", async (event) => {
     const input = event.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) {
-      return;
-    }
-    await importPetFile(root, snapshot, file);
+    await batchImportFiles(root, snapshot, Array.from(input.files ?? []));
   });
 
   const dropzone = root.querySelector<HTMLElement>("#pet-dropzone");
@@ -538,7 +689,6 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     popupViewState.dragActive = active;
     dropzone?.setAttribute("data-drag-active", String(active));
   };
-
   dropzone?.addEventListener("dragenter", (event) => {
     event.preventDefault();
     setDragActive(true);
@@ -556,52 +706,23 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   dropzone?.addEventListener("drop", async (event) => {
     event.preventDefault();
     setDragActive(false);
-    const file = event.dataTransfer?.files?.[0];
-    if (!file) {
-      return;
-    }
-    await importPetFile(root, snapshot, file);
+    await batchImportFiles(root, snapshot, Array.from(event.dataTransfer?.files ?? []));
   });
 
-  const bindSelector = (selector: string, siteId: SiteId) => {
-    const select = root.querySelector<HTMLSelectElement>(selector);
-    if (!select) {
-      return;
-    }
-
-    select.value = snapshot.sitePetBindings[siteId] ?? "";
-    select.addEventListener("change", async (event) => {
-      const target = event.currentTarget as HTMLSelectElement;
-      if (!target.value) {
-        return;
-      }
-
-      await chrome.runtime.sendMessage({
-        type: messageTypes.setSitePetBinding,
-        payload: { siteId, petId: target.value },
-      });
-      const nextSnapshot = await requestSnapshot();
-      popupViewState.feedbackMessage = translate(popupViewState.locale, "boundFeedback", {
-        site: localizeSite(popupViewState.locale, siteId),
-        pet: getPetDisplayName(nextSnapshot, target.value),
-      });
-      renderPopup(root, nextSnapshot);
-    });
-  };
-
-  bindSelector("#binding-deepseek", "deepseek");
-  bindSelector("#binding-gemini", "gemini");
-
-  root.querySelector<HTMLButtonElement>("#clear-cache")?.addEventListener("click", async () => {
+  root.querySelector("#clear-cache")?.addEventListener("click", async () => {
     await chrome.runtime.sendMessage({ type: messageTypes.clearPets });
+    popupViewState.feedbackMessage = copy.clearPetDataFeedback;
     const nextSnapshot = await requestSnapshot();
-    popupViewState.feedbackMessage = localeCopy[popupViewState.locale].clearPetDataFeedback;
     renderPopup(root, nextSnapshot);
   });
 }
 
 async function mountPopup(root: HTMLElement): Promise<void> {
   popupViewState.locale = await resolveInitialLocale();
+  popupViewState.page = "home";
+  popupViewState.dragActive = false;
+  popupViewState.managePageIndex = 0;
+  popupViewState.selectedPetIds.clear();
   const snapshot = await requestSnapshot();
   renderPopup(root, snapshot);
 }
@@ -611,7 +732,6 @@ async function main(): Promise<void> {
   if (!root) {
     return;
   }
-
   await mountPopup(root);
 }
 

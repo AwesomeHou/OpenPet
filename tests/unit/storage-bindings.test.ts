@@ -32,6 +32,29 @@ describe("OpenPetStorage site bindings", () => {
     });
   });
 
+  test("supports clearing a site binding with null", async () => {
+    const storage = new OpenPetStorage(createArea() as never);
+
+    await storage.setSitePetBinding("gemini", "doodlebob");
+    await storage.setSitePetBinding("gemini", null);
+
+    expect(await storage.getSitePetBindings()).toEqual({});
+  });
+
+  test("reads and writes independent site visibility flags", async () => {
+    const storage = new OpenPetStorage(createArea() as never);
+
+    expect(await storage.getSitePetVisibility()).toEqual({});
+
+    await storage.setSitePetVisibility("deepseek", false);
+    await storage.setSitePetVisibility("gemini", true);
+
+    expect(await storage.getSitePetVisibility()).toEqual({
+      deepseek: false,
+      gemini: true,
+    });
+  });
+
   test("reads and writes independent pet placements by site", async () => {
     const storage = new OpenPetStorage(createArea() as never);
 
@@ -50,5 +73,17 @@ describe("OpenPetStorage site bindings", () => {
       top: 60,
       facing: "left",
     });
+  });
+
+  test("reads and writes independent pet sizes by site", async () => {
+    const storage = new OpenPetStorage(createArea() as never);
+
+    expect(await storage.getPetSize("deepseek")).toBeNull();
+
+    await storage.setPetSize("deepseek", 132);
+    await storage.setPetSize("gemini", 176);
+
+    expect(await storage.getPetSize("deepseek")).toBe(132);
+    expect(await storage.getPetSize("gemini")).toBe(176);
   });
 });

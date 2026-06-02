@@ -1,4 +1,4 @@
-import { overlayRootId, storageKeys } from "@openpet/shared/constants";
+import { defaultPetSize, maxPetSize, minPetSize, overlayRootId, storageKeys } from "@openpet/shared/constants";
 import {
   messageTypes,
   type FocusTabMessage,
@@ -40,6 +40,7 @@ type OverlayButton = HTMLButtonElement & {
   __openPetState?: ScenePetState;
   __openPetHovering?: boolean;
   __openPetDragAction?: PetActionName | null;
+  __openPetResizing?: boolean;
   __openPetDragState?: {
     pointerId: number;
     startX: number;
@@ -51,10 +52,20 @@ type OverlayButton = HTMLButtonElement & {
   };
 };
 
+type ResizeHandle = HTMLDivElement & {
+  __openPetResizeState?: {
+    pointerId: number;
+    originSize: number;
+    startX: number;
+    startY: number;
+  };
+};
+
 let latestMessage: SceneUpdateMessage | null = null;
 const animationTimerMap = new WeakMap<HTMLElement, number>();
 const animationTokenMap = new WeakMap<HTMLElement, number>();
 const optimisticPlacementMap = new Map<ScenePetState["petId"], OverlayPlacement>();
+const optimisticSizeMap = new Map<ScenePetState["petId"], number>();
 
 const overlayStyles = `
 #${overlayRootId} {
@@ -88,14 +99,14 @@ const overlayStyles = `
   touch-action: none;
 }
 #${overlayRootId} .openpet-sprite {
-  width: ${cellWidth}px;
-  height: ${cellHeight}px;
+  width: ${defaultPetSize}px;
+  height: ${(defaultPetSize * cellHeight) / cellWidth}px;
   display: block;
   margin: 0;
   image-rendering: auto;
   background-repeat: no-repeat;
   background-position: 0 0;
-  background-size: ${cellWidth * atlasColumns}px ${cellHeight * atlasRows}px;
+  background-size: ${defaultPetSize * atlasColumns}px ${(defaultPetSize * atlasRows * cellHeight) / cellWidth}px;
 }
 #${overlayRootId} .openpet-state {
   font-size: 12px;
@@ -104,6 +115,50 @@ const overlayStyles = `
   border-radius: 999px;
   background: rgba(247, 241, 232, 0.88);
   line-height: 1.2;
+}
+#${overlayRootId} .openpet-resize-handle {
+  position: absolute;
+  right: -6px;
+  bottom: 20px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(255, 253, 249, 0.96);
+  border: 1px solid rgba(109, 78, 53, 0.28);
+  box-shadow: 0 4px 10px rgba(84, 60, 41, 0.16);
+  opacity: 0;
+  pointer-events: none;
+}
+#${overlayRootId} .openpet-resize-handle::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-right: 2px solid rgba(109, 78, 53, 0.7);
+  border-bottom: 2px solid rgba(109, 78, 53, 0.7);
+}
+#${overlayRootId} button[data-handle-visible="true"] .openpet-resize-handle {
+  opacity: 1;
+  pointer-events: auto;
+}
+#${overlayRootId} .openpet-context-menu {
+  position: absolute;
+  min-width: 108px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(255, 253, 249, 0.98);
+  border: 1px solid rgba(109, 78, 53, 0.16);
+  box-shadow: 0 12px 24px rgba(84, 60, 41, 0.18);
+  pointer-events: auto;
+}
+#${overlayRootId} .openpet-context-menu button {
+  all: unset;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 12px;
 }
 `;
 
@@ -147,7 +202,10 @@ function bindPlacementSync(root: HTMLDivElement): void {
   }
 
   globalThis.chrome?.storage?.onChanged?.addListener((changes, areaName) => {
-    if (areaName !== "local" || !(storageKeys.overlayPlacements in changes)) {
+    if (
+      areaName !== "local" ||
+      (!(storageKeys.overlayPlacements in changes) && !(storageKeys.petSizes in changes))
+    ) {
       return;
     }
     if (latestMessage) {
@@ -156,12 +214,18 @@ function bindPlacementSync(root: HTMLDivElement): void {
   });
 }
 
-function setSpriteFrame(sprite: HTMLElement, action: PetActionName, frameIndex: number): void {
+function setSpriteFrame(
+  sprite: HTMLElement,
+  action: PetActionName,
+  frameIndex: number,
+  petSize: number
+): void {
   const animation = actionAnimations[action];
   const column = animation.frames[frameIndex] ?? 0;
+  const scaledCellHeight = petSize * (cellHeight / cellWidth);
   sprite.dataset.action = action;
   sprite.dataset.frame = String(column);
-  sprite.style.backgroundPosition = `${-column * cellWidth}px ${-animation.row * cellHeight}px`;
+  sprite.style.backgroundPosition = `${-column * petSize}px ${-animation.row * scaledCellHeight}px`;
 }
 
 function clearSpriteAnimation(sprite: HTMLElement): void {
@@ -172,7 +236,12 @@ function clearSpriteAnimation(sprite: HTMLElement): void {
   }
 }
 
-function startSpriteAnimation(sprite: HTMLElement, petState: ScenePetState, action: PetActionName): void {
+function startSpriteAnimation(
+  sprite: HTMLElement,
+  petState: ScenePetState,
+  action: PetActionName,
+  petSize: number
+): void {
   if (!petState.pet.spritesheetDataUrl) {
     clearSpriteAnimation(sprite);
     sprite.style.backgroundImage = emptyBackground;
@@ -202,7 +271,7 @@ function startSpriteAnimation(sprite: HTMLElement, petState: ScenePetState, acti
     }
 
     const currentAnimation = actionAnimations[currentAction];
-    setSpriteFrame(sprite, currentAction, frameIndex);
+    setSpriteFrame(sprite, currentAction, frameIndex, petSize);
     const isLastFrame = frameIndex >= currentAnimation.frames.length - 1;
 
     if (isLastFrame && !currentAnimation.loop) {
@@ -246,7 +315,7 @@ function resolveDisplayedAction(button: OverlayButton, petState: ScenePetState):
     return button.__openPetDragAction;
   }
   if (button.__openPetHovering) {
-    return "running";
+    return "jumping";
   }
   return businessStateToAction[petState.state];
 }
@@ -254,17 +323,88 @@ function resolveDisplayedAction(button: OverlayButton, petState: ScenePetState):
 function refreshPetPresentation(button: OverlayButton, petState: ScenePetState): void {
   button.__openPetState = petState;
   const placement = resolvePlacement(petState);
+  const petSize = resolvePetSize(petState);
   button.style.left = `${placement.left}px`;
   button.style.top = `${placement.top}px`;
+  petState.size = petSize;
 
   const sprite = button.querySelector<HTMLElement>(".openpet-sprite");
   const label = button.querySelector<HTMLElement>(".openpet-state");
   if (sprite) {
-    startSpriteAnimation(sprite, petState, resolveDisplayedAction(button, petState));
+    const petHeight = (petSize * cellHeight) / cellWidth;
+    sprite.style.width = `${petSize}px`;
+    sprite.style.height = `${petHeight}px`;
+    sprite.style.backgroundSize = `${petSize * atlasColumns}px ${petHeight * atlasRows}px`;
+    startSpriteAnimation(sprite, petState, resolveDisplayedAction(button, petState), petSize);
   }
   if (label) {
     label.textContent = petState.state;
   }
+}
+
+async function persistSize(siteId: ScenePetState["siteId"], size: number): Promise<void> {
+  const storageArea = getStorageArea();
+  if (!storageArea) {
+    return;
+  }
+
+  const result = await storageArea.get(storageKeys.petSizes);
+  const sizes =
+    result[storageKeys.petSizes] && typeof result[storageKeys.petSizes] === "object"
+      ? (result[storageKeys.petSizes] as Record<string, number>)
+      : {};
+
+  await storageArea.set({
+    [storageKeys.petSizes]: {
+      ...sizes,
+      [siteId]: size,
+    },
+  });
+}
+
+function clampSize(size: number): number {
+  return Math.max(minPetSize, Math.min(maxPetSize, size));
+}
+
+function resolvePetSize(petState: ScenePetState): number {
+  const optimisticSize = optimisticSizeMap.get(petState.petId);
+  const nextSize = clampSize(
+    typeof petState.size === "number" && Number.isFinite(petState.size) ? petState.size : defaultPetSize
+  );
+  if (optimisticSize !== undefined && optimisticSize === nextSize) {
+    optimisticSizeMap.delete(petState.petId);
+    return nextSize;
+  }
+  return optimisticSize ?? nextSize;
+}
+
+function hideContextMenu(root: HTMLElement): void {
+  root.querySelector(".openpet-context-menu")?.remove();
+}
+
+function showContextMenu(button: OverlayButton, event: MouseEvent, petState: ScenePetState): void {
+  const root = ensureRoot();
+  hideContextMenu(root);
+  const menu = document.createElement("div");
+  menu.className = "openpet-context-menu";
+  menu.style.left = `${event.clientX}px`;
+  menu.style.top = `${event.clientY}px`;
+  menu.innerHTML = `<button type="button" data-menu-action="close-pet">关闭宠物</button>`;
+  root.append(menu);
+  menu.querySelector<HTMLButtonElement>("[data-menu-action='close-pet']")?.addEventListener("click", () => {
+    void chrome.runtime.sendMessage({
+      type: messageTypes.setSitePetVisibility,
+      payload: { siteId: petState.siteId, visible: false },
+    });
+    hideContextMenu(root);
+  });
+  window.setTimeout(() => {
+    const dismiss = () => {
+      hideContextMenu(root);
+      document.removeEventListener("pointerdown", dismiss, true);
+    };
+    document.addEventListener("pointerdown", dismiss, true);
+  }, 0);
 }
 
 async function persistPlacement(siteId: ScenePetState["siteId"], placement: OverlayPlacement): Promise<void> {
@@ -302,6 +442,9 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
   };
 
   button.onpointerdown = (event) => {
+    if (button.__openPetResizing) {
+      return;
+    }
     if (event.button !== 0) {
       return;
     }
@@ -379,16 +522,92 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
   button.onpointercancel = finishDrag;
   button.onpointerenter = () => {
     button.__openPetHovering = true;
+    button.dataset.handleVisible = "true";
+    const resizeHandle = button.querySelector<HTMLElement>(".openpet-resize-handle");
+    if (resizeHandle) {
+      resizeHandle.dataset.visible = "true";
+    }
     refreshPetPresentation(button, petState);
   };
   button.onpointerleave = () => {
     button.__openPetHovering = false;
     button.__openPetDragAction = null;
+    if (!button.__openPetResizing) {
+      button.dataset.handleVisible = "false";
+      const resizeHandle = button.querySelector<HTMLElement>(".openpet-resize-handle");
+      if (resizeHandle) {
+        resizeHandle.dataset.visible = "false";
+      }
+    }
     refreshPetPresentation(button, petState);
   };
+  button.oncontextmenu = (event) => {
+    event.preventDefault();
+    showContextMenu(button, event, petState);
+  };
+
+  const handle = button.querySelector<ResizeHandle>(".openpet-resize-handle");
+  if (!handle) {
+    return;
+  }
+
+  handle.dataset.visible = button.dataset.handleVisible === "true" ? "true" : "false";
+  handle.onpointerdown = (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    button.__openPetResizing = true;
+    button.dataset.handleVisible = "true";
+    handle.dataset.visible = "true";
+    handle.__openPetResizeState = {
+      pointerId: event.pointerId,
+      originSize: resolvePetSize(petState),
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    handle.setPointerCapture?.(event.pointerId);
+  };
+  handle.onpointermove = (event) => {
+    const resizeState = handle.__openPetResizeState;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) {
+      return;
+    }
+    const delta = Math.max(event.clientX - resizeState.startX, event.clientY - resizeState.startY);
+    const nextSize = clampSize(resizeState.originSize + delta);
+    petState.size = nextSize;
+    const sprite = button.querySelector<HTMLElement>(".openpet-sprite");
+    if (sprite) {
+      const petHeight = (nextSize * cellHeight) / cellWidth;
+      sprite.style.width = `${nextSize}px`;
+      sprite.style.height = `${petHeight}px`;
+      sprite.style.backgroundSize = `${nextSize * atlasColumns}px ${petHeight * atlasRows}px`;
+    }
+  };
+  const finishResize = (event: PointerEvent) => {
+    const resizeState = handle.__openPetResizeState;
+    if (!resizeState || resizeState.pointerId !== event.pointerId) {
+      return;
+    }
+    delete handle.__openPetResizeState;
+    button.__openPetResizing = false;
+    petState.size = clampSize(
+      Number.parseFloat(button.querySelector<HTMLElement>(".openpet-sprite")?.style.width ?? "") ||
+        resolvePetSize(petState)
+    );
+    optimisticSizeMap.set(petState.petId, petState.size);
+    handle.dataset.visible = button.dataset.handleVisible === "true" ? "true" : "false";
+    void persistSize(petState.siteId, petState.size);
+  };
+  handle.onpointerup = finishResize;
+  handle.onpointercancel = finishResize;
 }
 
 function renderPet(scene: HTMLElement, petState: ScenePetState): void {
+  if (optimisticSizeMap.has(petState.petId)) {
+    petState.size = optimisticSizeMap.get(petState.petId)!;
+  }
   let button = scene.querySelector<HTMLButtonElement>(
     `button[data-pet-id="${petState.petId}"]`
   ) as OverlayButton | null;
@@ -397,7 +616,11 @@ function renderPet(scene: HTMLElement, petState: ScenePetState): void {
     button.type = "button";
     button.className = "openpet-button";
     button.dataset.petId = petState.petId;
-    button.innerHTML = `<div class="openpet-sprite" aria-hidden="true"></div><div class="openpet-state"></div>`;
+    button.dataset.handleVisible = "false";
+    button.innerHTML =
+      `<div class="openpet-sprite" aria-hidden="true"></div>` +
+      `<div class="openpet-state"></div>` +
+      `<div class="openpet-resize-handle" data-resize-handle="true" data-visible="false"></div>`;
     scene.append(button);
   }
 
