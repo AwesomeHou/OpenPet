@@ -1,4 +1,12 @@
-import { managePetsPageSize, storageKeys } from "@openpet/shared/constants";
+import {
+  animationSpeedFineStep,
+  animationSpeedSliderStep,
+  defaultAnimationSpeed,
+  managePetsPageSize,
+  maxAnimationSpeed,
+  minAnimationSpeed,
+  storageKeys,
+} from "@openpet/shared/constants";
 import { messageTypes, type OpenPetMessage } from "@openpet/shared/messages";
 import type { SiteId } from "@openpet/shared/types";
 
@@ -8,6 +16,7 @@ type PopupSnapshot = {
   sitePetBindings: Partial<Record<SiteId, string>>;
   sitePetVisibility: Partial<Record<SiteId, boolean>>;
   overlayVisible: boolean;
+  animationSpeed: number;
 };
 
 type PopupPage = "home" | "manage";
@@ -119,7 +128,8 @@ const popupStyles = `
   }
   .field-grid,
   .future-grid,
-  .pet-grid {
+  .pet-grid,
+  .speed-controls {
     display: grid;
     gap: 10px;
   }
@@ -134,6 +144,7 @@ const popupStyles = `
     font-weight: 600;
   }
   .field-label select,
+  .field-label input[type="number"],
   .secondary-button,
   .primary-button,
   .future-button,
@@ -179,6 +190,38 @@ const popupStyles = `
   .upload-secondary,
   .helper-text,
   .pet-card-site {
+    font-size: 12px;
+    color: #7d6551;
+  }
+  .speed-inline {
+    display: grid;
+    gap: 8px;
+  }
+  .speed-topline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .speed-value {
+    font-size: 12px;
+    color: #6a4f39;
+    font-variant-numeric: tabular-nums;
+  }
+  .speed-range {
+    width: 100%;
+    margin: 0;
+    accent-color: #8d613f;
+  }
+  .speed-fine {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .speed-fine input[type="number"] {
+    flex: 1;
+  }
+  .speed-fine span {
     font-size: 12px;
     color: #7d6551;
   }
@@ -231,6 +274,7 @@ const localeCopy = {
     homeTitle: "Site bindings",
     dataTitle: "Pet data",
     managePetsTitle: "Manage Pets",
+    animationTitle: "Animation speed",
     overlayVisible: "Overlay visible",
     petStore: "Pet Store",
     companionNote: "For a persistent desktop experience, a companion app will be available later.",
@@ -256,6 +300,8 @@ const localeCopy = {
     previousPage: "Previous",
     nextPage: "Next",
     manageHint: "Pet-first view with paging and batch delete.",
+    animationHint: "Global speed from 0.50x to 2.00x. Slider step 0.05x, number input step 0.01x.",
+    animationFine: "Fine tune",
     displayOn: "on",
     displayOff: "off",
     sites: {
@@ -268,6 +314,7 @@ const localeCopy = {
     homeTitle: "站点绑定",
     dataTitle: "宠物数据",
     managePetsTitle: "管理宠物",
+    animationTitle: "动画速度",
     overlayVisible: "显示宠物浮层",
     petStore: "宠物商店",
     companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
@@ -293,6 +340,8 @@ const localeCopy = {
     previousPage: "上一页",
     nextPage: "下一页",
     manageHint: "按宠物查看站点绑定，支持分页与批量删除。",
+    animationHint: "全局速度范围 0.50x 到 2.00x。滑块步进 0.05x，数字输入步进 0.01x。",
+    animationFine: "精细微调",
     displayOn: "开启",
     displayOff: "关闭",
     sites: {
@@ -361,6 +410,17 @@ function escapeHtml(value: string): string {
 
 function getPetDisplayName(snapshot: PopupSnapshot, petId: string): string {
   return snapshot.pets.find((pet) => pet.id === petId)?.displayName ?? petId;
+}
+
+function clampAnimationSpeed(value: number): number {
+  if (!Number.isFinite(value)) {
+    return defaultAnimationSpeed;
+  }
+  return Math.max(minAnimationSpeed, Math.min(maxAnimationSpeed, value));
+}
+
+function formatAnimationSpeed(value: number): string {
+  return `${clampAnimationSpeed(value).toFixed(2)}x`;
 }
 
 async function requestSnapshot(): Promise<PopupSnapshot> {
@@ -434,6 +494,7 @@ function renderHomePage(snapshot: PopupSnapshot): string {
   const locale = popupViewState.locale;
   const copy = localeCopy[locale];
   const petOptions = createPetOptions(snapshot, locale);
+  const animationSpeed = clampAnimationSpeed(snapshot.animationSpeed);
   return `
     <section class="popup-card">
       <div class="card-title">${copy.homeTitle}</div>
@@ -463,6 +524,39 @@ function renderHomePage(snapshot: PopupSnapshot): string {
             `;
           })
           .join("")}
+      </div>
+    </section>
+
+    <section class="popup-card">
+      <div class="card-title">${copy.animationTitle}</div>
+      <div class="speed-controls">
+        <label class="field-label speed-inline" for="animation-speed-range">
+          <div class="speed-topline">
+            <span>${copy.animationTitle}</span>
+            <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
+          </div>
+          <input
+            id="animation-speed-range"
+            class="speed-range"
+            type="range"
+            min="${minAnimationSpeed}"
+            max="${maxAnimationSpeed}"
+            step="${animationSpeedSliderStep}"
+            value="${animationSpeed}"
+          />
+        </label>
+        <label class="field-label speed-fine" for="animation-speed-number">
+          <span>${copy.animationFine}</span>
+          <input
+            id="animation-speed-number"
+            type="number"
+            min="${minAnimationSpeed}"
+            max="${maxAnimationSpeed}"
+            step="${animationSpeedFineStep}"
+            value="${animationSpeed.toFixed(2)}"
+          />
+        </label>
+        <div class="helper-text">${copy.animationHint}</div>
       </div>
     </section>
 
@@ -671,6 +765,44 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       type: messageTypes.toggleOverlay,
       payload: { visible: target.checked },
     });
+  });
+
+  const rangeInput = root.querySelector<HTMLInputElement>("#animation-speed-range");
+  const numberInput = root.querySelector<HTMLInputElement>("#animation-speed-number");
+  const valueLabel = root.querySelector<HTMLElement>("#animation-speed-value");
+  const syncAnimationInputs = (nextSpeed: number) => {
+    const clamped = clampAnimationSpeed(nextSpeed);
+    if (rangeInput) {
+      rangeInput.value = clamped.toFixed(2);
+    }
+    if (numberInput) {
+      numberInput.value = clamped.toFixed(2);
+    }
+    valueLabel?.replaceChildren(document.createTextNode(formatAnimationSpeed(clamped)));
+    return clamped;
+  };
+  const commitAnimationSpeed = async (nextSpeed: number) => {
+    const speed = syncAnimationInputs(nextSpeed);
+    const result = await chrome.runtime.sendMessage({
+      type: messageTypes.setAnimationSpeed,
+      payload: { speed },
+    });
+    const nextSnapshot = await requestSnapshot();
+    nextSnapshot.animationSpeed = clampAnimationSpeed(result?.speed ?? speed);
+    renderPopup(root, nextSnapshot);
+  };
+
+  rangeInput?.addEventListener("input", () => {
+    syncAnimationInputs(Number.parseFloat(rangeInput.value));
+  });
+  rangeInput?.addEventListener("change", async () => {
+    await commitAnimationSpeed(Number.parseFloat(rangeInput.value));
+  });
+  numberInput?.addEventListener("input", () => {
+    syncAnimationInputs(Number.parseFloat(numberInput.value));
+  });
+  numberInput?.addEventListener("change", async () => {
+    await commitAnimationSpeed(Number.parseFloat(numberInput.value));
   });
 
   root.querySelector("#manage-pets")?.addEventListener("click", () => {

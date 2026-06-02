@@ -1,4 +1,13 @@
-import { defaultPetSize, maxPetSize, minPetSize, overlayRootId, storageKeys } from "@openpet/shared/constants";
+import {
+  defaultAnimationSpeed,
+  defaultPetSize,
+  maxAnimationSpeed,
+  maxPetSize,
+  minAnimationSpeed,
+  minPetSize,
+  overlayRootId,
+  storageKeys,
+} from "@openpet/shared/constants";
 import {
   messageTypes,
   type FocusTabMessage,
@@ -62,6 +71,7 @@ type ResizeHandle = HTMLDivElement & {
 };
 
 let latestMessage: SceneUpdateMessage | null = null;
+let latestAnimationSpeed = defaultAnimationSpeed;
 const animationTimerMap = new WeakMap<HTMLElement, number>();
 const animationTokenMap = new WeakMap<HTMLElement, number>();
 const optimisticPlacementMap = new Map<ScenePetState["petId"], OverlayPlacement>();
@@ -89,7 +99,7 @@ const overlayStyles = `
 #${overlayRootId} button {
   all: unset;
   position: absolute;
-  cursor: pointer;
+  cursor: default;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -122,6 +132,7 @@ const overlayStyles = `
   bottom: 20px;
   width: 18px;
   height: 18px;
+  cursor: nwse-resize;
   border-radius: 999px;
   background: rgba(255, 253, 249, 0.96);
   border: 1px solid rgba(109, 78, 53, 0.28);
@@ -228,12 +239,48 @@ function setSpriteFrame(
   sprite.style.backgroundPosition = `${-column * petSize}px ${-animation.row * scaledCellHeight}px`;
 }
 
+function syncSpriteDimensions(sprite: HTMLElement, petSize: number): void {
+  const petHeight = (petSize * cellHeight) / cellWidth;
+  sprite.style.width = `${petSize}px`;
+  sprite.style.height = `${petHeight}px`;
+  sprite.style.backgroundSize = `${petSize * atlasColumns}px ${petHeight * atlasRows}px`;
+}
+
+function syncCurrentSpriteFrame(sprite: HTMLElement, petSize: number): void {
+  const action = sprite.dataset.action as PetActionName | undefined;
+  const frameColumn = Number.parseInt(sprite.dataset.frame ?? "", 10);
+  if (!action || Number.isNaN(frameColumn)) {
+    return;
+  }
+
+  const animation = actionAnimations[action];
+  const frameIndex = animation.frames.indexOf(frameColumn);
+  const resolvedFrameIndex = frameIndex >= 0 ? frameIndex : 0;
+  setSpriteFrame(sprite, action, resolvedFrameIndex, petSize);
+}
+
+function shouldRepeatTransientAction(sprite: HTMLElement, action: PetActionName): boolean {
+  if (action !== "jumping") {
+    return false;
+  }
+
+  const button = sprite.closest("button") as OverlayButton | null;
+  return button?.__openPetHovering === true;
+}
+
 function clearSpriteAnimation(sprite: HTMLElement): void {
   const existing = animationTimerMap.get(sprite);
   if (existing !== undefined) {
     window.clearTimeout(existing);
     animationTimerMap.delete(sprite);
   }
+}
+
+function resolveAnimationSpeed(speed: number | undefined): number {
+  if (!Number.isFinite(speed)) {
+    return defaultAnimationSpeed;
+  }
+  return Math.max(minAnimationSpeed, Math.min(maxAnimationSpeed, speed));
 }
 
 function startSpriteAnimation(
@@ -275,10 +322,12 @@ function startSpriteAnimation(
     const isLastFrame = frameIndex >= currentAnimation.frames.length - 1;
 
     if (isLastFrame && !currentAnimation.loop) {
-      const fallbackAction = currentAnimation.fallbackAction ?? "idle";
+      const fallbackAction = shouldRepeatTransientAction(sprite, currentAction)
+        ? currentAction
+        : (currentAnimation.fallbackAction ?? "idle");
       const timer = window.setTimeout(
         () => tick(0, fallbackAction),
-        currentAnimation.durations[frameIndex] ?? 180
+        Math.round((currentAnimation.durations[frameIndex] ?? 180) / resolveAnimationSpeed(latestAnimationSpeed))
       );
       animationTimerMap.set(sprite, timer);
       return;
@@ -287,7 +336,10 @@ function startSpriteAnimation(
     const nextFrameIndex = (frameIndex + 1) % currentAnimation.frames.length;
     const timer = window.setTimeout(
       () => tick(nextFrameIndex, currentAction),
-      currentAnimation.durations[frameIndex] ?? currentAnimation.durations[0]
+      Math.round(
+        (currentAnimation.durations[frameIndex] ?? currentAnimation.durations[0]) /
+          resolveAnimationSpeed(latestAnimationSpeed)
+      )
     );
     animationTimerMap.set(sprite, timer);
   };
@@ -331,10 +383,7 @@ function refreshPetPresentation(button: OverlayButton, petState: ScenePetState):
   const sprite = button.querySelector<HTMLElement>(".openpet-sprite");
   const label = button.querySelector<HTMLElement>(".openpet-state");
   if (sprite) {
-    const petHeight = (petSize * cellHeight) / cellWidth;
-    sprite.style.width = `${petSize}px`;
-    sprite.style.height = `${petHeight}px`;
-    sprite.style.backgroundSize = `${petSize * atlasColumns}px ${petHeight * atlasRows}px`;
+    syncSpriteDimensions(sprite, petSize);
     startSpriteAnimation(sprite, petState, resolveDisplayedAction(button, petState), petSize);
   }
   if (label) {
@@ -462,6 +511,7 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
       originTop: rect.top,
       moved: false,
     };
+    button.style.cursor = "grabbing";
     button.setPointerCapture?.(event.pointerId);
   };
 
@@ -504,6 +554,7 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
     if (dragState.moved) {
       button.dataset.suppressClick = "true";
       button.__openPetDragAction = null;
+      button.style.cursor = "default";
       refreshPetPresentation(button, petState);
       const placement = optimisticPlacementMap.get(petState.petId) ?? petState.placement;
       void persistPlacement(petState.siteId, {
@@ -515,6 +566,7 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
     }
 
     button.__openPetDragAction = null;
+    button.style.cursor = "default";
     refreshPetPresentation(button, petState);
   };
 
@@ -579,10 +631,8 @@ function bindPetInteractions(button: OverlayButton, petState: ScenePetState): vo
     petState.size = nextSize;
     const sprite = button.querySelector<HTMLElement>(".openpet-sprite");
     if (sprite) {
-      const petHeight = (nextSize * cellHeight) / cellWidth;
-      sprite.style.width = `${nextSize}px`;
-      sprite.style.height = `${petHeight}px`;
-      sprite.style.backgroundSize = `${nextSize * atlasColumns}px ${petHeight * atlasRows}px`;
+      syncSpriteDimensions(sprite, nextSize);
+      syncCurrentSpriteFrame(sprite, nextSize);
     }
   };
   const finishResize = (event: PointerEvent) => {
@@ -631,6 +681,7 @@ function renderPet(scene: HTMLElement, petState: ScenePetState): void {
 
 export function applyOverlayUpdate(message: SceneUpdateMessage): void {
   latestMessage = message;
+  latestAnimationSpeed = resolveAnimationSpeed(message.payload.animationSpeed);
   const root = ensureRoot();
   root.dataset.hidden = message.payload.scene.visible ? "false" : "true";
   const scene = root.querySelector(".openpet-scene") as HTMLElement;

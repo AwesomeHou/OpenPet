@@ -44,6 +44,7 @@ function createSceneUpdate() {
         ],
       },
       visible: true,
+      animationSpeed: 1,
     },
   };
 }
@@ -200,12 +201,14 @@ describe("overlay rendering", () => {
     } as DOMRect);
 
     button.onpointerdown?.(createPointerEvent("pointerdown", { button: 0, pointerId: 7, clientX: 24, clientY: 28 }) as PointerEvent);
+    expect(button.style.cursor).toBe("grabbing");
     button.onpointermove?.(createPointerEvent("pointermove", { pointerId: 7, clientX: 52, clientY: 66 }) as PointerEvent);
     button.onpointerup?.(createPointerEvent("pointerup", { pointerId: 7, clientX: 52, clientY: 66 }) as PointerEvent);
 
     expect((button.parentElement as HTMLElement).style.left || button.style.left).toBe("44px");
     expect((button.parentElement as HTMLElement).style.top || button.style.top).toBe("54px");
     expect((otherButton.parentElement as HTMLElement).style.left || otherButton.style.left).not.toBe("44px");
+    expect(button.style.cursor).toBe("default");
   });
 
   test("keeps the dragged position locally before scene storage catches up", () => {
@@ -250,6 +253,9 @@ describe("overlay rendering", () => {
 
     expect(sprite.dataset.action).toBe("jumping");
 
+    vi.advanceTimersByTime(760);
+    expect(sprite.dataset.action).toBe("jumping");
+
     button.onpointerleave?.(new Event("pointerleave") as PointerEvent);
 
     expect(sprite.dataset.action).toBe("review");
@@ -270,6 +276,28 @@ describe("overlay rendering", () => {
     expect(sprite.style.backgroundPosition).toBe("0px -1248px");
 
     button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
+    expect(sprite.style.backgroundPosition).toBe("0px -624px");
+  });
+
+  test("keeps frame offsets aligned while resizing before pointer release", () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
+    const handle = button.querySelector(".openpet-resize-handle") as HTMLDivElement;
+
+    button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
+    expect(sprite.dataset.action).toBe("jumping");
+    expect(sprite.style.backgroundPosition).toBe("0px -416px");
+
+    handle.onpointerdown?.(
+      createPointerEvent("pointerdown", { button: 0, pointerId: 9, clientX: 120, clientY: 120 }) as PointerEvent
+    );
+    handle.onpointermove?.(
+      createPointerEvent("pointermove", { pointerId: 9, clientX: 168, clientY: 168 }) as PointerEvent
+    );
+
+    expect(sprite.style.width).toBe("144px");
     expect(sprite.style.backgroundPosition).toBe("0px -624px");
   });
 
@@ -341,6 +369,19 @@ describe("overlay rendering", () => {
     expect(geminiSprite?.dataset.action).toBe(initialGeminiAction);
   });
 
+  test("respects global animation speed when scheduling frames", () => {
+    const message = createSceneUpdate();
+    message.payload.animationSpeed = 2;
+    applyOverlayUpdate(message);
+
+    const sprite = getOverlayRoot()?.querySelector<HTMLElement>('[data-pet-id="boba"] .openpet-sprite');
+    const initialFrame = sprite?.dataset.frame;
+
+    vi.advanceTimersByTime(150);
+
+    expect(sprite?.dataset.frame).not.toBe(initialFrame);
+  });
+
   test("sends a close-pet visibility update from the right-click menu", async () => {
     const sendMessage = vi.fn(async () => undefined);
     vi.stubGlobal("chrome", {
@@ -378,6 +419,16 @@ describe("overlay rendering", () => {
         payload: { siteId: "deepseek", visible: false },
       });
     });
+  });
+
+  test("uses default cursor on the pet body and resize cursor on the handle", () => {
+    applyOverlayUpdate(createSceneUpdate());
+
+    const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
+    const handle = button.querySelector(".openpet-resize-handle") as HTMLDivElement;
+
+    expect(getComputedStyle(button).cursor).toBe("default");
+    expect(getComputedStyle(handle).cursor).toBe("nwse-resize");
   });
 
   test("shows a resize handle and persists bounded size changes", async () => {

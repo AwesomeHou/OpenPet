@@ -1,5 +1,5 @@
 import type { OverlayPlacement, SiteId, StoredPetRecord } from "@openpet/shared/types";
-import { storageKeys } from "@openpet/shared/constants";
+import { defaultAnimationSpeed, storageKeys } from "@openpet/shared/constants";
 
 type StorageArea = Pick<chrome.storage.StorageArea, "get" | "set" | "remove">;
 
@@ -119,6 +119,16 @@ export class OpenPetStorage {
 
   async setOverlayVisible(visible: boolean): Promise<void> {
     await this.requireArea().set({ [storageKeys.overlayVisible]: visible });
+  }
+
+  async getAnimationSpeed(): Promise<number> {
+    const result = await this.requireArea().get(storageKeys.animationSpeed);
+    const speed = result[storageKeys.animationSpeed];
+    return typeof speed === "number" && Number.isFinite(speed) ? speed : defaultAnimationSpeed;
+  }
+
+  async setAnimationSpeed(speed: number): Promise<void> {
+    await this.requireArea().set({ [storageKeys.animationSpeed]: speed });
   }
 
   async clearPets(): Promise<void> {

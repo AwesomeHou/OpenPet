@@ -35,6 +35,7 @@ function createSceneMessage(state: "idle" | "thinking" | "streaming" | "waiting"
         ],
       },
       visible: true,
+      animationSpeed: 1,
     },
   };
 }

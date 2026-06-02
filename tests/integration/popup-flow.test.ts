@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { mountPopup, renderPopup } from "../../apps/chrome-extension/src/popup/main";
 import { messageTypes } from "@openpet/shared/messages";
-import { storageKeys } from "@openpet/shared/constants";
+import { defaultAnimationSpeed, storageKeys } from "@openpet/shared/constants";
 
 const defaultSnapshot = {
   pets: [
@@ -11,6 +11,7 @@ const defaultSnapshot = {
   sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
   sitePetVisibility: { deepseek: true, gemini: true },
   overlayVisible: true,
+  animationSpeed: defaultAnimationSpeed,
 } as const;
 
 function installChromeMock(options?: {
@@ -107,8 +108,9 @@ describe("popup flow", () => {
             pets: [],
             sitePetBindings: {},
             sitePetVisibility: {},
-            overlayVisible: true,
-          };
+          overlayVisible: true,
+          animationSpeed: defaultAnimationSpeed,
+        };
         }
 
         return { ok: true };
@@ -286,6 +288,57 @@ describe("popup flow", () => {
       expect(root.querySelector("#status")?.textContent).toContain("Imported 1");
       expect(root.querySelector("#status")?.textContent).toContain("Overwritten 1");
       expect(root.querySelector("#status")?.textContent).toContain("Failed 1");
+    });
+  });
+
+  test("supports global animation speed controls with slider and fine-tune input", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { speed?: number } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return {
+          ...defaultSnapshot,
+          animationSpeed: 1.15,
+        };
+      }
+      if (message.type === messageTypes.setAnimationSpeed) {
+        return {
+          ok: true,
+          speed: message.payload?.speed,
+        };
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "en-US", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const range = root.querySelector("#animation-speed-range") as HTMLInputElement;
+    const number = root.querySelector("#animation-speed-number") as HTMLInputElement;
+    expect(range.value).toBe("1.15");
+    expect(number.value).toBe("1.15");
+
+    range.value = "1.45";
+    range.dispatchEvent(new Event("input", { bubbles: true }));
+    expect((root.querySelector("#animation-speed-value") as HTMLElement).textContent).toContain("1.45x");
+    range.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1.45 },
+      });
+    });
+
+    const rerenderedNumber = root.querySelector("#animation-speed-number") as HTMLInputElement;
+    rerenderedNumber.value = "0.67";
+    rerenderedNumber.dispatchEvent(new Event("input", { bubbles: true }));
+    rerenderedNumber.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 0.67 },
+      });
     });
   });
 });

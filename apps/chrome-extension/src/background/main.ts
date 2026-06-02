@@ -5,6 +5,7 @@ import type {
   OpenPetMessage,
   PopupSnapshotMessage,
   SceneUpdateMessage,
+  SetAnimationSpeedMessage,
   SetSitePetBindingMessage,
   SetSitePetVisibilityMessage,
 } from "@openpet/shared/messages";
@@ -19,7 +20,7 @@ import type {
 } from "@openpet/shared/types";
 import { createTabState } from "@openpet/state/sessionState";
 import { importPetFromZip } from "@openpet/pet-assets/importPet";
-import { defaultPetSize } from "@openpet/shared/constants";
+import { defaultAnimationSpeed, defaultPetSize, maxAnimationSpeed, minAnimationSpeed } from "@openpet/shared/constants";
 import { OpenPetStorage } from "./storage";
 
 type ChromeTabsApi = Pick<typeof chrome.tabs, "sendMessage" | "update" | "query">;
@@ -69,19 +70,23 @@ function buildScenePets(
 async function buildScene(
   storageRepo: OpenPetStorage,
   stateMap: Map<number, TabPetState>
-): Promise<OverlaySceneState> {
-  const [pets, bindings, visibility, visible, placements, petSizes] = await Promise.all([
+): Promise<{ scene: OverlaySceneState; animationSpeed: number }> {
+  const [pets, bindings, visibility, visible, placements, petSizes, animationSpeed] = await Promise.all([
     storageRepo.getPets(),
     storageRepo.getSitePetBindings(),
     storageRepo.getSitePetVisibility(),
     storageRepo.isOverlayVisible(),
     storageRepo.getOverlayPlacements(),
     storageRepo.getPetSizes(),
+    storageRepo.getAnimationSpeed(),
   ]);
 
   return {
-    pets: buildScenePets(pets, bindings, visibility, stateMap, placements, petSizes),
-    visible,
+    scene: {
+      pets: buildScenePets(pets, bindings, visibility, stateMap, placements, petSizes),
+      visible,
+    },
+    animationSpeed,
   };
 }
 
@@ -120,12 +125,13 @@ export async function publishScene(
   const storageRepo = options.storageRepo ?? storage;
   const tabsApi = options.tabsApi ?? chrome.tabs;
   const stateMap = options.tabStateMap ?? tabState;
-  const scene = await buildScene(storageRepo, stateMap);
+  const { scene, animationSpeed } = await buildScene(storageRepo, stateMap);
   const message: SceneUpdateMessage = {
     type: messageTypes.sceneUpdate,
     payload: {
       scene,
       visible: scene.visible,
+      animationSpeed,
     },
   };
   await tabsApi.sendMessage(tabId, message).catch(() => undefined);
@@ -248,6 +254,19 @@ export function createMessageHandler(
       return true;
     }
 
+    if (message.type === messageTypes.setAnimationSpeed) {
+      const animationMessage = message as SetAnimationSpeedMessage;
+      const nextSpeed = Math.max(
+        minAnimationSpeed,
+        Math.min(maxAnimationSpeed, animationMessage.payload.speed || defaultAnimationSpeed)
+      );
+      void storageRepo.setAnimationSpeed(nextSpeed).then(async () => {
+        await publishKnownTabs(storageRepo, tabsApi, stateMap);
+        sendResponse({ ok: true, speed: nextSpeed });
+      });
+      return true;
+    }
+
     if (message.type === messageTypes.setSitePetVisibility) {
       const visibilityMessage = message as SetSitePetVisibilityMessage;
       void storageRepo
@@ -290,12 +309,14 @@ export function createMessageHandler(
         storageRepo.getSitePetBindings(),
         storageRepo.getSitePetVisibility(),
         storageRepo.isOverlayVisible(),
-      ]).then(([pets, sitePetBindings, sitePetVisibility, overlayVisible]) => {
+        storageRepo.getAnimationSpeed(),
+      ]).then(([pets, sitePetBindings, sitePetVisibility, overlayVisible, animationSpeed]) => {
         const snapshot: PopupSnapshotMessage["payload"] = {
           pets: createPopupPets(pets, sitePetBindings),
           sitePetBindings,
           sitePetVisibility,
           overlayVisible,
+          animationSpeed,
         };
         console.debug(
           "[openpet-background] popupSnapshot",
@@ -304,6 +325,7 @@ export function createMessageHandler(
             sitePetBindings: snapshot.sitePetBindings,
             sitePetVisibility: snapshot.sitePetVisibility,
             overlayVisible: snapshot.overlayVisible,
+            animationSpeed: snapshot.animationSpeed,
           })
         );
         sendResponse(snapshot);
@@ -312,12 +334,13 @@ export function createMessageHandler(
     }
 
     if (message.type === messageTypes.currentSceneState && sender.tab?.id) {
-      void buildScene(storageRepo, stateMap).then((scene) => {
+      void buildScene(storageRepo, stateMap).then(({ scene, animationSpeed }) => {
         sendResponse({
           type: messageTypes.sceneUpdate,
           payload: {
             scene,
             visible: scene.visible,
+            animationSpeed,
           },
         } satisfies SceneUpdateMessage);
       });

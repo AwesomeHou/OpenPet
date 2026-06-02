@@ -34,6 +34,7 @@ describe("shared contracts", () => {
   test("scene update messages remain stable", () => {
     expect(messageTypes.sceneUpdate).toBe("openpet/scene-update");
     expect(messageTypes.currentSceneState).toBe("openpet/current-scene-state");
+    expect(messageTypes.setAnimationSpeed).toBe("openpet/set-animation-speed");
     expect(messageTypes.setSitePetBinding).toBe("openpet/set-site-pet-binding");
     expect(messageTypes.setSitePetVisibility).toBe("openpet/set-site-pet-visibility");
     expect(messageTypes.deletePets).toBe("openpet/delete-pets");

@@ -86,4 +86,14 @@ describe("OpenPetStorage site bindings", () => {
     expect(await storage.getPetSize("deepseek")).toBe(132);
     expect(await storage.getPetSize("gemini")).toBe(176);
   });
+
+  test("reads and writes global animation speed", async () => {
+    const storage = new OpenPetStorage(createArea() as never);
+
+    expect(await storage.getAnimationSpeed()).toBe(1);
+
+    await storage.setAnimationSpeed(1.35);
+
+    expect(await storage.getAnimationSpeed()).toBe(1.35);
+  });
 });

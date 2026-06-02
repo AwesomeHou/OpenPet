@@ -20,6 +20,7 @@ function createStorageStub(
     sitePetVisibility: Partial<Record<"deepseek" | "gemini", boolean>>;
     overlayVisible: boolean;
     petSizes: Partial<Record<"deepseek" | "gemini", number>>;
+    animationSpeed: number;
   }> = {}
 ) {
   const state = {
@@ -28,6 +29,7 @@ function createStorageStub(
     sitePetVisibility: overrides.sitePetVisibility ?? {},
     overlayVisible: overrides.overlayVisible ?? true,
     petSizes: overrides.petSizes ?? {},
+    animationSpeed: overrides.animationSpeed ?? 1,
   };
 
   return {
@@ -57,6 +59,10 @@ function createStorageStub(
     isOverlayVisible: vi.fn(async () => state.overlayVisible),
     setOverlayVisible: vi.fn(async (visible: boolean) => {
       state.overlayVisible = visible;
+    }),
+    getAnimationSpeed: vi.fn(async () => state.animationSpeed),
+    setAnimationSpeed: vi.fn(async (speed: number) => {
+      state.animationSpeed = speed;
     }),
     deletePets: vi.fn(async (petIds: string[]) => {
       state.pets = state.pets.filter((pet) => !petIds.includes(pet.id));
@@ -153,6 +159,7 @@ describe("background message flow", () => {
                 }),
               ]),
             }),
+            animationSpeed: 1,
           }),
         })
       );
@@ -220,8 +227,64 @@ describe("background message flow", () => {
           },
           sitePetVisibility: {},
           overlayVisible: false,
+          animationSpeed: 1,
         })
       );
+    });
+  });
+
+  test("stores global animation speed and republishes the scene", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const tabsApi = {
+      sendMessage,
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 8 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [createPet("doodlebob", "Doodle Bob")],
+      sitePetBindings: { gemini: "doodlebob" },
+      overlayVisible: true,
+      animationSpeed: 1,
+    });
+    const stateMap = new Map<number, TabPetState>([
+      [
+        8,
+        {
+          tabId: 8,
+          url: "https://gemini.google.com/app",
+          site: "gemini",
+          state: "streaming",
+          updatedAt: 1,
+        },
+      ],
+    ]);
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: stateMap,
+    });
+
+    const sendResponse = vi.fn();
+    handler(
+      {
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1.4 },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(storageRepo.setAnimationSpeed).toHaveBeenCalledWith(1.4);
+      expect(sendMessage).toHaveBeenCalledWith(
+        8,
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            animationSpeed: 1.4,
+          }),
+        })
+      );
+      expect(sendResponse).toHaveBeenCalledWith({ ok: true, speed: 1.4 });
     });
   });
 

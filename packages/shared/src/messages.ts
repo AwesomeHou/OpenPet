@@ -12,6 +12,7 @@ export const messageTypes = {
   focusTab: "openpet/focus-tab",
   importPet: "openpet/import-pet",
   batchImportPets: "openpet/batch-import-pets",
+  setAnimationSpeed: "openpet/set-animation-speed",
   setSitePetBinding: "openpet/set-site-pet-binding",
   setSitePetVisibility: "openpet/set-site-pet-visibility",
   deletePets: "openpet/delete-pets",
@@ -39,6 +40,7 @@ export interface SceneUpdateMessage {
   payload: {
     scene: OverlaySceneState;
     visible: boolean;
+    animationSpeed: number;
   };
 }
 
@@ -71,6 +73,13 @@ export interface ToggleOverlayMessage {
   type: typeof messageTypes.toggleOverlay;
   payload: {
     visible: boolean;
+  };
+}
+
+export interface SetAnimationSpeedMessage {
+  type: typeof messageTypes.setAnimationSpeed;
+  payload: {
+    speed: number;
   };
 }
 
@@ -108,6 +117,7 @@ export interface PopupSnapshotMessage {
     sitePetBindings: Partial<Record<SiteId, string>>;
     sitePetVisibility: Partial<Record<SiteId, boolean>>;
     overlayVisible: boolean;
+    animationSpeed: number;
   };
 }
 
@@ -122,6 +132,7 @@ export type OpenPetMessage =
   | FocusTabMessage
   | ImportPetMessage
   | BatchImportPetsMessage
+  | SetAnimationSpeedMessage
   | SetSitePetBindingMessage
   | SetSitePetVisibilityMessage
   | DeletePetsMessage
