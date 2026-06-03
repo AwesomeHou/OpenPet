@@ -21,6 +21,8 @@ describe("site adapters", () => {
   test("recognizes ChatGPT and Doubao hostnames", () => {
     expect(isChatGPTUrl("https://chatgpt.com/")).toBe(true);
     expect(isDoubaoUrl("https://www.doubao.com/chat/")).toBe(true);
+    expect(isDoubaoUrl("https://www.doubao.com/")).toBe(false);
+    expect(isDoubaoUrl("https://www.doubao.com/legal/feature_intro")).toBe(false);
     expect(isChatGPTUrl("https://example.com/")).toBe(false);
     expect(isDoubaoUrl("https://example.com/")).toBe(false);
   });
@@ -35,6 +37,30 @@ describe("site adapters", () => {
       url: "https://www.doubao.com/chat/",
     });
     expect(detectDoubaoPage(doubaoDom.window.document)).toBe(true);
+  });
+
+  test("matches Doubao's real composer placeholder and send button pattern", () => {
+    const dom = new JSDOM(
+      `<div>内容由豆包 AI 生成，请仔细甄别</div>
+       <button>登录</button>
+       <textarea class="semi-input-textarea semi-input-textarea-autosize" placeholder="发消息..."></textarea>
+       <button class="size-36 !bg-g-send-msg-btn-bg" aria-label=""></button>`,
+      {
+        url: "https://www.doubao.com/chat/",
+      }
+    );
+
+    const signals = collectDoubaoSignals(dom.window.document);
+    expect(detectDoubaoPage(dom.window.document)).toBe(true);
+    expect(signals.composerReady).toBe(true);
+  });
+
+  test("does not activate Doubao adapter on non-chat pages just because the brand text is present", () => {
+    const dom = new JSDOM(`<div>豆包</div><button>登录</button><button>下载电脑版</button>`, {
+      url: "https://www.doubao.com/",
+    });
+
+    expect(detectDoubaoPage(dom.window.document)).toBe(false);
   });
 
   test("selects the matching adapter for DeepSeek, Gemini, ChatGPT, and Doubao urls", () => {

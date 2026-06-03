@@ -2,8 +2,9 @@ import type { RawPageSignals } from "@openpet/shared/types";
 
 export function isDoubaoUrl(url: string): boolean {
   try {
-    const { hostname } = new URL(url);
-    return hostname === "www.doubao.com" || hostname === "doubao.com";
+    const { hostname, pathname } = new URL(url);
+    const isDoubaoHost = hostname === "www.doubao.com" || hostname === "doubao.com";
+    return isDoubaoHost && (pathname === "/chat" || pathname === "/chat/" || pathname.startsWith("/chat/"));
   } catch {
     return false;
   }
@@ -11,6 +12,7 @@ export function isDoubaoUrl(url: string): boolean {
 
 export function findDoubaoComposer(doc: Document): HTMLElement | null {
   return (
+    doc.querySelector("textarea[placeholder='发消息...']") ??
     doc.querySelector("textarea") ??
     doc.querySelector("[contenteditable='true']") ??
     doc.querySelector("input[type='text']") ??
@@ -20,6 +22,13 @@ export function findDoubaoComposer(doc: Document): HTMLElement | null {
 }
 
 export function findDoubaoSendButton(doc: Document): HTMLButtonElement | null {
+  const explicitButton =
+    (doc.querySelector("button[class*='send-msg-btn']") as HTMLButtonElement | null) ??
+    (doc.querySelector("button[aria-label='']") as HTMLButtonElement | null);
+  if (explicitButton) {
+    return explicitButton;
+  }
+
   const buttons = Array.from(doc.querySelectorAll("button"));
   return (
     buttons.find((button) => {
@@ -57,19 +66,18 @@ function findDoubaoAuthSurface(doc: Document): boolean {
     bodyText.includes("请先登录再使用豆包") ||
     bodyText.includes("使用 dola登录") ||
     bodyText.includes("登录") ||
+    bodyText.includes("下载电脑版") ||
+    bodyText.includes("内容由豆包 ai 生成") ||
     bodyText.includes("手机号登录")
   );
 }
 
 export function detectDoubaoPage(doc: Document): boolean {
-  const bodyText = doc.body.textContent?.toLowerCase() ?? "";
   return (
     isDoubaoUrl(doc.location.href) &&
     (Boolean(findDoubaoComposer(doc)) ||
       Boolean(findDoubaoSendButton(doc)) ||
-      findDoubaoAuthSurface(doc) ||
-      bodyText.includes("豆包") ||
-      bodyText.includes("doubao"))
+      findDoubaoAuthSurface(doc))
   );
 }
 
