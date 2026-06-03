@@ -52,7 +52,7 @@ const popupViewState: PopupViewState = {
   selectedPetIds: new Set(),
 };
 
-const supportedSites: SiteId[] = ["deepseek", "gemini"];
+const supportedSites: SiteId[] = ["deepseek", "gemini", "chatgpt", "doubao"];
 
 const popupStyles = `
   :root {
@@ -451,6 +451,8 @@ const localeCopy = {
     clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
     geminiPet: "Gemini pet",
+    chatgptPet: "ChatGPT pet",
+    doubaoPet: "Doubao pet",
     showPet: "Show pet",
     noPet: "None",
     noImportedPets: "No imported pets",
@@ -480,6 +482,8 @@ const localeCopy = {
     sites: {
       deepseek: "DeepSeek",
       gemini: "Gemini",
+      chatgpt: "ChatGPT",
+      doubao: "Doubao",
     },
   },
   zh: {
@@ -497,6 +501,8 @@ const localeCopy = {
     clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
     geminiPet: "Gemini 宠物",
+    chatgptPet: "ChatGPT 宠物",
+    doubaoPet: "豆包宠物",
     showPet: "显示宠物",
     noPet: "无",
     noImportedPets: "暂无已导入宠物",
@@ -526,9 +532,25 @@ const localeCopy = {
     sites: {
       deepseek: "DeepSeek",
       gemini: "Gemini",
+      chatgpt: "ChatGPT",
+      doubao: "豆包",
     },
   },
 } as const;
+
+function getSitePetLabel(locale: PopupLocale, siteId: SiteId): string {
+  const copy = localeCopy[locale];
+  switch (siteId) {
+    case "deepseek":
+      return copy.deepseekPet;
+    case "gemini":
+      return copy.geminiPet;
+    case "chatgpt":
+      return copy.chatgptPet;
+    case "doubao":
+      return copy.doubaoPet;
+  }
+}
 
 function getStorageArea(): chrome.storage.StorageArea | null {
   return globalThis.chrome?.storage?.local ?? null;
@@ -757,7 +779,7 @@ function renderHomePage(snapshot: PopupSnapshot): string {
         ${supportedSites
           .map((siteId) => {
             const bindingId = `binding-${siteId}`;
-            const petLabel = siteId === "deepseek" ? copy.deepseekPet : copy.geminiPet;
+            const petLabel = getSitePetLabel(locale, siteId);
             const selectedValue = snapshot.sitePetBindings[siteId] ?? "";
             return `
               <label class="field-label">

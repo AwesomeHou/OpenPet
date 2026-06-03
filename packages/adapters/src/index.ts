@@ -7,6 +7,20 @@ import {
   isDeepSeekUrl,
 } from "./deepseek";
 import {
+  collectChatGPTSignals,
+  detectChatGPTPage,
+  findChatGPTComposer,
+  findChatGPTSendButton,
+  isChatGPTUrl,
+} from "./chatgpt";
+import {
+  collectDoubaoSignals,
+  detectDoubaoPage,
+  findDoubaoComposer,
+  findDoubaoSendButton,
+  isDoubaoUrl,
+} from "./doubao";
+import {
   collectGeminiSignals,
   detectGeminiPage,
   findGeminiComposer,
@@ -39,6 +53,22 @@ export const siteAdapters: SiteAdapter[] = [
     findComposer: findGeminiComposer,
     findSendButton: findGeminiSendButton,
     collectSignals: collectGeminiSignals,
+  },
+  {
+    siteId: "chatgpt",
+    matches: isChatGPTUrl,
+    detectPage: detectChatGPTPage,
+    findComposer: findChatGPTComposer,
+    findSendButton: findChatGPTSendButton,
+    collectSignals: collectChatGPTSignals,
+  },
+  {
+    siteId: "doubao",
+    matches: isDoubaoUrl,
+    detectPage: detectDoubaoPage,
+    findComposer: findDoubaoComposer,
+    findSendButton: findDoubaoSendButton,
+    collectSignals: collectDoubaoSignals,
   },
 ];
 

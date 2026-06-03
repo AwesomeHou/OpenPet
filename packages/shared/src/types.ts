@@ -23,7 +23,7 @@ export const petActionNames = [
 
 export type PetActionName = (typeof petActionNames)[number];
 
-export const siteIds = ["deepseek", "gemini"] as const;
+export const siteIds = ["deepseek", "gemini", "chatgpt", "doubao"] as const;
 
 export type SiteId = (typeof siteIds)[number];
 

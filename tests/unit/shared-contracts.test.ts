@@ -28,7 +28,7 @@ describe("shared contracts", () => {
   });
 
   test("site identifiers remain aligned with the supported multi-pet rollout", () => {
-    expect(siteIds).toEqual(["deepseek", "gemini"]);
+    expect(siteIds).toEqual(["deepseek", "gemini", "chatgpt", "doubao"]);
   });
 
   test("scene update messages remain stable", () => {

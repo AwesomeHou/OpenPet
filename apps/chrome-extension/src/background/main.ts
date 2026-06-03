@@ -30,6 +30,8 @@ const tabState = new Map<number, TabPetState>();
 const defaultPlacements: Record<SiteId, OverlayPlacement> = {
   deepseek: { left: 16, top: 16, facing: "right" },
   gemini: { left: 160, top: 16, facing: "right" },
+  chatgpt: { left: 304, top: 16, facing: "right" },
+  doubao: { left: 448, top: 16, facing: "right" },
 };
 
 function buildScenePets(
@@ -41,7 +43,7 @@ function buildScenePets(
   petSizes: Partial<Record<SiteId, number>>
 ): ScenePetState[] {
   const petsById = new Map(pets.map((pet) => [pet.id, pet]));
-  const siteOrder: SiteId[] = ["deepseek", "gemini"];
+  const siteOrder: SiteId[] = ["deepseek", "gemini", "chatgpt", "doubao"];
 
   return siteOrder
     .map((siteId) => {
