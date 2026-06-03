@@ -61,6 +61,27 @@ const popupStyles = `
   html, body {
     margin: 0;
     background: transparent;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(141, 97, 63, 0.72) rgba(255, 248, 239, 0.92);
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 10px;
+  }
+  html::-webkit-scrollbar-track,
+  body::-webkit-scrollbar-track {
+    background: rgba(255, 248, 239, 0.92);
+    border-radius: 999px;
+  }
+  html::-webkit-scrollbar-thumb,
+  body::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(154, 107, 71, 0.92), rgba(130, 88, 56, 0.96));
+    border-radius: 999px;
+    border: 2px solid rgba(255, 248, 239, 0.92);
+  }
+  html::-webkit-scrollbar-thumb:hover,
+  body::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(166, 117, 78, 0.98), rgba(137, 92, 59, 1));
   }
   .popup-shell {
     width: 352px;
