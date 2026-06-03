@@ -1,6 +1,6 @@
 import { JSDOM } from "jsdom";
 import { describe, expect, test } from "vitest";
-import { getAdapterForUrl } from "@openpet/adapters";
+import { getAdapterForUrl, siteAdapters } from "@openpet/adapters";
 import { collectChatGPTSignals, detectChatGPTPage, isChatGPTUrl } from "@openpet/adapters/chatgpt";
 import { collectDoubaoSignals, detectDoubaoPage, isDoubaoUrl } from "@openpet/adapters/doubao";
 import { collectGeminiSignals, detectGeminiPage, isGeminiUrl } from "@openpet/adapters/gemini";
@@ -61,6 +61,18 @@ describe("site adapters", () => {
     });
 
     expect(detectDoubaoPage(dom.window.document)).toBe(false);
+  });
+
+  test("uses the main chat region as the Doubao observation root", () => {
+    const dom = new JSDOM(
+      `<main class="flex-1 min-w-0 flex items-stretch relative center-bg-uIUvUP"><textarea placeholder="发消息..."></textarea></main>`,
+      {
+        url: "https://www.doubao.com/chat/",
+      }
+    );
+    const adapter = siteAdapters.find((item) => item.siteId === "doubao");
+
+    expect(adapter?.getObservationRoot?.(dom.window.document)).toBe(dom.window.document.querySelector("main"));
   });
 
   test("selects the matching adapter for DeepSeek, Gemini, ChatGPT, and Doubao urls", () => {

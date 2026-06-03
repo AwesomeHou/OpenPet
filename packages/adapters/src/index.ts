@@ -32,6 +32,7 @@ export interface SiteAdapter {
   siteId: SiteId;
   matches(url: string): boolean;
   detectPage(doc: Document): boolean;
+  getObservationRoot?(doc: Document): Element | Document;
   findComposer(doc: Document): Element | null;
   findSendButton(doc: Document): HTMLButtonElement | null;
   collectSignals(doc: Document, previous?: Partial<RawPageSignals>): RawPageSignals;
@@ -42,6 +43,7 @@ export const siteAdapters: SiteAdapter[] = [
     siteId: "deepseek",
     matches: isDeepSeekUrl,
     detectPage: detectDeepSeekPage,
+    getObservationRoot: (doc) => doc,
     findComposer: findDeepSeekComposer,
     findSendButton: findDeepSeekSendButton,
     collectSignals: collectDeepSeekSignals,
@@ -50,6 +52,7 @@ export const siteAdapters: SiteAdapter[] = [
     siteId: "gemini",
     matches: isGeminiUrl,
     detectPage: detectGeminiPage,
+    getObservationRoot: (doc) => doc,
     findComposer: findGeminiComposer,
     findSendButton: findGeminiSendButton,
     collectSignals: collectGeminiSignals,
@@ -58,6 +61,7 @@ export const siteAdapters: SiteAdapter[] = [
     siteId: "chatgpt",
     matches: isChatGPTUrl,
     detectPage: detectChatGPTPage,
+    getObservationRoot: (doc) => doc.querySelector("main") ?? doc,
     findComposer: findChatGPTComposer,
     findSendButton: findChatGPTSendButton,
     collectSignals: collectChatGPTSignals,
@@ -66,6 +70,7 @@ export const siteAdapters: SiteAdapter[] = [
     siteId: "doubao",
     matches: isDoubaoUrl,
     detectPage: detectDoubaoPage,
+    getObservationRoot: (doc) => doc.querySelector("main") ?? doc,
     findComposer: findDoubaoComposer,
     findSendButton: findDoubaoSendButton,
     collectSignals: collectDoubaoSignals,

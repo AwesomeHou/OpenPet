@@ -179,6 +179,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
   const runtime = createRuntimeTracker();
   const view = doc.defaultView ?? window;
   const adapter = getAdapterForUrl(doc.location.href);
+  const observationRoot = adapter?.getObservationRoot?.(doc) ?? doc.documentElement;
   chrome.runtime.onMessage.addListener((message: OpenPetMessage) => {
     handleContentMessage(message);
   });
@@ -311,7 +312,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     queuePublish();
   });
 
-  observer.observe(doc.documentElement, {
+  observer.observe(observationRoot, {
     subtree: true,
     childList: true,
     attributes: false,
