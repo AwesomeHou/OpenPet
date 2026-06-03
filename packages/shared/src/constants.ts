@@ -17,5 +17,5 @@ export const managePetsPageSize = 9;
 export const defaultAnimationSpeed = 1;
 export const minAnimationSpeed = 0.5;
 export const maxAnimationSpeed = 2;
-export const animationSpeedSliderStep = 0.05;
+export const animationSpeedSliderStep = 0.01;
 export const animationSpeedFineStep = 0.01;

@@ -5,8 +5,8 @@ import { defaultAnimationSpeed, storageKeys } from "@openpet/shared/constants";
 
 const defaultSnapshot = {
   pets: [
-    { id: "boba", displayName: "Boba", boundSites: ["deepseek"] },
-    { id: "doodlebob", displayName: "Doodle Bob", boundSites: ["gemini"] },
+    { id: "boba", displayName: "Boba", boundSites: ["deepseek"], spritesheetDataUrl: "data:image/webp;base64,boba" },
+    { id: "doodlebob", displayName: "Doodle Bob", boundSites: ["gemini"], spritesheetDataUrl: "data:image/webp;base64,doodlebob" },
   ],
   sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
   sitePetVisibility: { deepseek: true, gemini: true },
@@ -72,7 +72,7 @@ describe("popup flow", () => {
     await mountPopup(root);
 
     expect(root.textContent).not.toContain("当前状态");
-    expect(root.textContent).toContain("清空宠物数据");
+    expect(root.querySelector("#status")).toBeNull();
     expect(root.textContent).toContain("宠物商店");
     expect(root.textContent).toContain("管理宠物");
     expect(root.textContent).toContain("未来可搭配 companion app 使用");
@@ -103,11 +103,11 @@ describe("popup flow", () => {
     const { sendMessage } = installChromeMock({
       locale: "en-US",
       sendMessage: vi.fn(async (message: { type: string }) => {
-        if (message.type === messageTypes.popupSnapshot) {
-          return {
-            pets: [],
-            sitePetBindings: {},
-            sitePetVisibility: {},
+      if (message.type === messageTypes.popupSnapshot) {
+        return {
+          pets: [],
+          sitePetBindings: {},
+          sitePetVisibility: {},
           overlayVisible: true,
           animationSpeed: defaultAnimationSpeed,
         };
@@ -155,11 +155,11 @@ describe("popup flow", () => {
         type: messageTypes.setSitePetBinding,
         payload: { siteId: "deepseek", petId: "doodlebob" },
       });
-      expect(root.querySelector("#status")?.textContent).toContain("已将 DeepSeek 绑定到 Doodle Bob");
+      expect(root.querySelector("#import-feedback")).toBeNull();
     });
   });
 
-  test("supports explicit unbound option and independent site visibility toggles", async () => {
+  test("supports explicit unbound option without per-site visibility toggles", async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === messageTypes.popupSnapshot) {
         return {
@@ -177,22 +177,16 @@ describe("popup flow", () => {
 
     const deepseekSelect = root.querySelector("#binding-deepseek") as HTMLSelectElement;
     expect([...deepseekSelect.options].some((option) => option.value === "")).toBe(true);
+    expect(root.querySelector("#visibility-deepseek")).toBeNull();
+    expect(root.querySelector("#visibility-gemini")).toBeNull();
+    expect(root.querySelector("#clear-cache")).toBeNull();
     deepseekSelect.value = "";
     deepseekSelect.dispatchEvent(new Event("change", { bubbles: true }));
-
-    const deepseekVisibility = root.querySelector("#visibility-deepseek") as HTMLInputElement;
-    expect(deepseekVisibility.checked).toBe(false);
-    deepseekVisibility.checked = true;
-    deepseekVisibility.dispatchEvent(new Event("change", { bubbles: true }));
 
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
         type: messageTypes.setSitePetBinding,
         payload: { siteId: "deepseek", petId: null },
-      });
-      expect(sendMessage).toHaveBeenCalledWith({
-        type: messageTypes.setSitePetVisibility,
-        payload: { siteId: "deepseek", visible: true },
       });
     });
   });
@@ -206,6 +200,7 @@ describe("popup flow", () => {
             id: `pet-${index + 1}`,
             displayName: `Pet ${index + 1}`,
             boundSites: index === 0 ? ["deepseek"] : [],
+            spritesheetDataUrl: `data:image/webp;base64,pet-${index + 1}`,
           })),
         };
       }
@@ -219,14 +214,29 @@ describe("popup flow", () => {
     root.querySelector<HTMLButtonElement>("#manage-pets")?.click();
 
     expect(root.textContent).toContain("Manage Pets");
+    expect((root.querySelector("#manage-back") as HTMLButtonElement | null)?.textContent).toContain("←");
+    expect(root.textContent).not.toContain("Pet-first view with paging and batch delete.");
     expect(root.querySelectorAll('[data-pet-card="true"]')).toHaveLength(9);
-
-    (root.querySelector('[data-pet-select="pet-1"]') as HTMLInputElement).click();
+    expect(root.querySelectorAll(".pet-card-preview-sprite")).toHaveLength(9);
+    expect(root.querySelector("#manage-page-indicator")?.textContent).toBe("1 / 2");
+    expect(root.querySelector('[data-manage-bind-site="deepseek"]')).toBeNull();
+    expect(root.querySelector("#manage-delete-selected")).toBeNull();
+    expect(root.querySelector("#manage-toggle-delete")).toBeNull();
+    expect(root.textContent).toContain("DeepSeek");
+    expect(root.textContent).toContain("Unbound");
+    const firstCard = root.querySelector('[data-manage-pet-id="pet-1"]') as HTMLElement;
+    firstCard.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
+    root.querySelector<HTMLButtonElement>('[data-manage-menu="multi-select"]')?.click();
+    expect(root.querySelector("#manage-delete-selected")).not.toBeNull();
+    expect(root.querySelector("#manage-batch-export")).not.toBeNull();
+    expect(root.querySelector("#manage-close-multi")?.textContent).toBe("×");
     root.querySelector<HTMLButtonElement>("#manage-next-page")?.click();
     await vi.waitFor(() => {
       expect(root.querySelector("#manage-page-indicator")?.textContent).toContain("2 / 2");
     });
-    (root.querySelector('[data-pet-select="pet-10"]') as HTMLInputElement).click();
+    const pageTwoCheckbox = root.querySelector('[data-pet-select="pet-10"]') as HTMLInputElement;
+    pageTwoCheckbox.checked = true;
+    pageTwoCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
     expect(root.querySelector("#manage-selection-count")?.textContent).toContain("2");
 
     root.querySelector<HTMLButtonElement>("#manage-delete-selected")?.click();
@@ -235,6 +245,31 @@ describe("popup flow", () => {
       expect(sendMessage).toHaveBeenCalledWith({
         type: messageTypes.deletePets,
         payload: { petIds: ["pet-1", "pet-10"] },
+      });
+    });
+  });
+
+  test("supports right-click single delete from the manage page", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { petIds?: string[] } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#manage-pets")?.click();
+
+    const firstCard = root.querySelector('[data-manage-pet-id="boba"]') as HTMLElement;
+    firstCard.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
+    root.querySelector<HTMLButtonElement>('[data-manage-menu="delete"]')?.click();
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.deletePets,
+        payload: { petIds: ["boba"] },
       });
     });
   });
@@ -285,13 +320,13 @@ describe("popup flow", () => {
           ]),
         },
       });
-      expect(root.querySelector("#status")?.textContent).toContain("Imported 1");
-      expect(root.querySelector("#status")?.textContent).toContain("Overwritten 1");
-      expect(root.querySelector("#status")?.textContent).toContain("Failed 1");
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("Imported 1");
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("Overwritten 1");
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("Failed 1");
     });
   });
 
-  test("supports global animation speed controls with slider and fine-tune input", async () => {
+  test("supports global animation speed controls with slider and repeated inline nudges", async () => {
     const sendMessage = vi.fn(async (message: { type: string; payload?: { speed?: number } }) => {
       if (message.type === messageTypes.popupSnapshot) {
         return {
@@ -313,9 +348,12 @@ describe("popup flow", () => {
     await mountPopup(root);
 
     const range = root.querySelector("#animation-speed-range") as HTMLInputElement;
-    const number = root.querySelector("#animation-speed-number") as HTMLInputElement;
     expect(range.value).toBe("1.15");
-    expect(number.value).toBe("1.15");
+    expect(root.querySelector("#animation-speed-number")).toBeNull();
+    expect(root.textContent).not.toContain("Fine tune");
+    expect(root.textContent).not.toContain("精细微调");
+    expect(root.textContent).not.toContain("Global speed from");
+    expect(root.textContent).not.toContain("全局速度范围");
 
     range.value = "1.45";
     range.dispatchEvent(new Event("input", { bubbles: true }));
@@ -329,15 +367,75 @@ describe("popup flow", () => {
       });
     });
 
-    const rerenderedNumber = root.querySelector("#animation-speed-number") as HTMLInputElement;
-    rerenderedNumber.value = "0.67";
-    rerenderedNumber.dispatchEvent(new Event("input", { bubbles: true }));
-    rerenderedNumber.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>("#animation-speed-decrease")?.click();
 
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
         type: messageTypes.setAnimationSpeed,
-        payload: { speed: 0.67 },
+        payload: { speed: 1.44 },
+      });
+    });
+
+    root.querySelector<HTMLButtonElement>("#animation-speed-decrease")?.click();
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1.43 },
+      });
+    });
+  });
+
+  test("keeps exact fine-tune speed state independent from the slider step", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { speed?: number } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return {
+          ...defaultSnapshot,
+          animationSpeed: 1,
+        };
+      }
+      if (message.type === messageTypes.setAnimationSpeed) {
+        return {
+          ok: true,
+          speed: message.payload?.speed,
+        };
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    root.querySelector<HTMLButtonElement>("#animation-speed-increase")?.click();
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1.01 },
+      });
+    });
+
+    root.querySelector<HTMLButtonElement>("#animation-speed-increase")?.click();
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1.02 },
+      });
+    });
+
+    root.querySelector<HTMLButtonElement>("#animation-speed-decrease")?.click();
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1.01 },
+      });
+    });
+
+    root.querySelector<HTMLButtonElement>("#animation-speed-decrease")?.click();
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.setAnimationSpeed,
+        payload: { speed: 1 },
       });
     });
   });

@@ -7,12 +7,13 @@ import {
   minAnimationSpeed,
   storageKeys,
 } from "@openpet/shared/constants";
+import JSZip from "jszip";
 import { messageTypes, type OpenPetMessage } from "@openpet/shared/messages";
 import type { SiteId } from "@openpet/shared/types";
 
 type PopupLocale = "zh" | "en";
 type PopupSnapshot = {
-  pets: Array<{ id: string; displayName: string; boundSites: SiteId[] }>;
+  pets: Array<{ id: string; displayName: string; boundSites: SiteId[]; spritesheetDataUrl?: string }>;
   sitePetBindings: Partial<Record<SiteId, string>>;
   sitePetVisibility: Partial<Record<SiteId, boolean>>;
   overlayVisible: boolean;
@@ -26,7 +27,16 @@ type PopupViewState = {
   feedbackMessage: string;
   dragActive: boolean;
   page: PopupPage;
+  currentAnimationSpeed: number;
   managePageIndex: number;
+  manageDeleteMode: boolean;
+  manageContextMenu:
+    | {
+        petId: string;
+        x: number;
+        y: number;
+      }
+    | null;
   selectedPetIds: Set<string>;
 };
 
@@ -35,7 +45,10 @@ const popupViewState: PopupViewState = {
   feedbackMessage: "",
   dragActive: false,
   page: "home",
+  currentAnimationSpeed: defaultAnimationSpeed,
   managePageIndex: 0,
+  manageDeleteMode: false,
+  manageContextMenu: null,
   selectedPetIds: new Set(),
 };
 
@@ -53,6 +66,7 @@ const popupStyles = `
     width: 352px;
     box-sizing: border-box;
     padding: 18px;
+    position: relative;
     display: grid;
     gap: 14px;
     background: linear-gradient(180deg, #f8f1e7 0%, #f3eadf 100%);
@@ -60,11 +74,8 @@ const popupStyles = `
     font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   }
   .popup-header,
-  .header-row,
-  .footer-row,
   .toggle-row,
-  .pet-card-meta,
-  .pet-card-header {
+  .pet-card-meta {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -102,17 +113,10 @@ const popupStyles = `
     background: #ffffff;
     color: #2f241b;
   }
-  .feedback-banner,
   .popup-card {
     border-radius: 16px;
     background: rgba(255, 255, 255, 0.74);
     box-shadow: 0 12px 30px rgba(84, 60, 41, 0.08);
-  }
-  .feedback-banner {
-    min-height: 18px;
-    padding: 12px 14px;
-    font-size: 12px;
-    color: #6a4f39;
   }
   .popup-card {
     display: grid;
@@ -193,6 +197,15 @@ const popupStyles = `
     font-size: 12px;
     color: #7d6551;
   }
+  .inline-feedback {
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 12px;
+    line-height: 1.45;
+    color: #6a4f39;
+    background: rgba(255, 248, 239, 0.92);
+    border: 1px solid rgba(141, 97, 63, 0.16);
+  }
   .speed-inline {
     display: grid;
     gap: 8px;
@@ -203,27 +216,39 @@ const popupStyles = `
     justify-content: space-between;
     gap: 12px;
   }
+  .speed-value-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
   .speed-value {
     font-size: 12px;
     color: #6a4f39;
     font-variant-numeric: tabular-nums;
   }
+  .speed-nudge-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .speed-nudge-button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid rgba(109, 78, 53, 0.16);
+    background: #fffdf9;
+    color: #6a4f39;
+    display: grid;
+    place-items: center;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+  }
   .speed-range {
     width: 100%;
     margin: 0;
     accent-color: #8d613f;
-  }
-  .speed-fine {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .speed-fine input[type="number"] {
-    flex: 1;
-  }
-  .speed-fine span {
-    font-size: 12px;
-    color: #7d6551;
   }
   .pet-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -235,21 +260,51 @@ const popupStyles = `
     border-radius: 14px;
     background: rgba(255, 251, 246, 0.96);
     border: 1px solid rgba(141, 97, 63, 0.16);
+    align-content: start;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .pet-card-preview {
+    display: grid;
+    place-items: center;
+    min-height: 88px;
+    padding: 4px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(250, 243, 235, 0.98), rgba(245, 235, 224, 0.92));
+    overflow: hidden;
+  }
+  .pet-card-preview-sprite {
+    width: 60px;
+    height: 65px;
+    background-repeat: no-repeat;
+    background-position: 0 0;
+    background-size: 480px 585px;
+    image-rendering: auto;
+    filter: drop-shadow(0 6px 12px rgba(84, 60, 41, 0.12));
+    flex-shrink: 0;
+  }
+  .pet-card-preview-empty {
+    font-size: 11px;
+    color: #8d7158;
   }
   .pet-card-name {
     font-size: 12px;
     font-weight: 700;
     line-height: 1.3;
   }
-  .pet-card-badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px 8px;
-    border-radius: 999px;
+  .pet-card-sites {
+    display: grid;
+    gap: 4px;
+  }
+  .pet-card-sites-title {
     font-size: 11px;
-    background: rgba(141, 97, 63, 0.12);
+    font-weight: 700;
     color: #6a4f39;
+    letter-spacing: 0.03em;
+  }
+  .pet-card-site {
+    line-height: 1.35;
+    word-break: break-word;
   }
   .page-button:disabled,
   .secondary-button:disabled,
@@ -266,6 +321,97 @@ const popupStyles = `
     background: #fffdf9;
     color: #6a4f39;
   }
+  .manage-header {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr) 40px;
+    align-items: center;
+    gap: 12px;
+  }
+  .manage-back-button {
+    justify-self: start;
+    font-size: 18px;
+    font-weight: 800;
+    line-height: 1;
+  }
+  .manage-header-title {
+    margin: 0;
+    text-align: center;
+    font-size: 18px;
+    font-weight: 800;
+    color: #6a4f39;
+    letter-spacing: 0.01em;
+  }
+  .manage-pager {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+  }
+  .manage-page-indicator {
+    min-width: 54px;
+    text-align: center;
+    font-size: 13px;
+    font-weight: 700;
+    color: #4f3a2b;
+    font-variant-numeric: tabular-nums;
+  }
+  .manage-actions {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+  }
+  .manage-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .manage-close-button {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 999px;
+    display: grid;
+    place-items: center;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .manage-selection-count {
+    font-size: 13px;
+    color: #4f3a2b;
+    font-variant-numeric: tabular-nums;
+  }
+  .manage-batch-actions {
+    display: grid;
+    grid-template-columns: 40px repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    align-items: center;
+  }
+  .manage-context-menu {
+    position: absolute;
+    z-index: 10;
+    min-width: 116px;
+    padding: 6px;
+    border-radius: 14px;
+    background: rgba(255, 253, 249, 0.98);
+    border: 1px solid rgba(109, 78, 53, 0.14);
+    box-shadow: 0 12px 24px rgba(84, 60, 41, 0.14);
+  }
+  .manage-context-menu button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    color: #4f3a2b;
+    text-align: left;
+    padding: 9px 10px;
+    border-radius: 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  .manage-context-menu button:hover {
+    background: rgba(141, 97, 63, 0.08);
+  }
 `;
 
 const localeCopy = {
@@ -280,6 +426,7 @@ const localeCopy = {
     companionNote: "For a persistent desktop experience, a companion app will be available later.",
     importZip: "Import pet zip",
     importDropHint: "Click or drop .zip files here",
+    importPreviewUnavailable: "Preview unavailable",
     clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
     geminiPet: "Gemini pet",
@@ -293,15 +440,20 @@ const localeCopy = {
     visibilityFeedback: "{site} display {state}",
     deletedFeedback: "Deleted {count} pets",
     clearPetDataFeedback: "Cleared pet data",
+    exportedFeedback: "Exported {pet}",
     back: "Back",
     unbound: "Unbound",
+    multiSelect: "Multi-select",
+    exportPet: "Export",
+    deletePet: "Delete",
+    close: "Close",
+    batchDelete: "Batch delete",
+    batchExport: "Batch export",
+    cancel: "Cancel",
     selectedCount: "Selected {count}",
     deleteSelected: "Delete selected",
     previousPage: "Previous",
     nextPage: "Next",
-    manageHint: "Pet-first view with paging and batch delete.",
-    animationHint: "Global speed from 0.50x to 2.00x. Slider step 0.05x, number input step 0.01x.",
-    animationFine: "Fine tune",
     displayOn: "on",
     displayOff: "off",
     sites: {
@@ -320,6 +472,7 @@ const localeCopy = {
     companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
     importZip: "导入宠物 zip",
     importDropHint: "点击选择或将多个 .zip 文件拖到这里",
+    importPreviewUnavailable: "暂无预览",
     clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
     geminiPet: "Gemini 宠物",
@@ -333,15 +486,20 @@ const localeCopy = {
     visibilityFeedback: "{site} 显示已{state}",
     deletedFeedback: "已删除 {count} 只宠物",
     clearPetDataFeedback: "已清空宠物数据",
+    exportedFeedback: "已导出 {pet}",
     back: "返回",
     unbound: "未绑定",
+    multiSelect: "多选",
+    exportPet: "导出",
+    deletePet: "删除",
+    close: "关闭",
+    batchDelete: "批量删除",
+    batchExport: "批量导出",
+    cancel: "取消",
     selectedCount: "已选 {count}",
     deleteSelected: "删除已选",
     previousPage: "上一页",
     nextPage: "下一页",
-    manageHint: "按宠物查看站点绑定，支持分页与批量删除。",
-    animationHint: "全局速度范围 0.50x 到 2.00x。滑块步进 0.05x，数字输入步进 0.01x。",
-    animationFine: "精细微调",
     displayOn: "开启",
     displayOff: "关闭",
     sites: {
@@ -410,6 +568,10 @@ function escapeHtml(value: string): string {
 
 function getPetDisplayName(snapshot: PopupSnapshot, petId: string): string {
   return snapshot.pets.find((pet) => pet.id === petId)?.displayName ?? petId;
+}
+
+function getPetSnapshot(snapshot: PopupSnapshot, petId: string): PopupSnapshot["pets"][number] | undefined {
+  return snapshot.pets.find((pet) => pet.id === petId);
 }
 
 function clampAnimationSpeed(value: number): number {
@@ -490,11 +652,79 @@ function clampManagePage(snapshot: PopupSnapshot): void {
   popupViewState.managePageIndex = Math.min(popupViewState.managePageIndex, pageCount - 1);
 }
 
+function renderImportFeedback(): string {
+  if (!popupViewState.feedbackMessage) {
+    return "";
+  }
+  return `<div class="inline-feedback" id="import-feedback">${escapeHtml(popupViewState.feedbackMessage)}</div>`;
+}
+
+function renderStaticPreview(pet: PopupSnapshot["pets"][number], locale: PopupLocale): string {
+  if (!pet.spritesheetDataUrl) {
+    return `<div class="pet-card-preview-empty">${escapeHtml(localeCopy[locale].importPreviewUnavailable)}</div>`;
+  }
+
+  return `<div class="pet-card-preview-sprite" style="background-image: url('${escapeHtml(pet.spritesheetDataUrl)}');"></div>`;
+}
+
+function decodeDataUrl(dataUrl: string): Uint8Array {
+  const [, base64Payload = ""] = dataUrl.split(",", 2);
+  const binary = atob(base64Payload);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+async function exportPetPackage(snapshot: PopupSnapshot, petId: string): Promise<string | null> {
+  const pet = getPetSnapshot(snapshot, petId);
+  if (!pet?.spritesheetDataUrl) {
+    return null;
+  }
+
+  const zip = new JSZip();
+  zip.file(
+    "pet.json",
+    JSON.stringify(
+      {
+        id: pet.id,
+        displayName: pet.displayName,
+        spritesheetPath: "spritesheet.webp",
+      },
+      null,
+      2
+    )
+  );
+  zip.file("spritesheet.webp", decodeDataUrl(pet.spritesheetDataUrl));
+  const blob = await zip.generateAsync({ type: "blob" });
+  const downloadUrl = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = downloadUrl;
+  anchor.download = `${pet.id}.zip`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 0);
+  return pet.displayName;
+}
+
+async function exportSelectedPets(snapshot: PopupSnapshot, petIds: string[]): Promise<string[]> {
+  const exported: string[] = [];
+  for (const petId of petIds) {
+    const name = await exportPetPackage(snapshot, petId);
+    if (name) {
+      exported.push(name);
+    }
+  }
+  return exported;
+}
+
 function renderHomePage(snapshot: PopupSnapshot): string {
   const locale = popupViewState.locale;
   const copy = localeCopy[locale];
   const petOptions = createPetOptions(snapshot, locale);
-  const animationSpeed = clampAnimationSpeed(snapshot.animationSpeed);
+  const animationSpeed = clampAnimationSpeed(popupViewState.currentAnimationSpeed);
   return `
     <section class="popup-card">
       <div class="card-title">${copy.homeTitle}</div>
@@ -506,7 +736,6 @@ function renderHomePage(snapshot: PopupSnapshot): string {
         ${supportedSites
           .map((siteId) => {
             const bindingId = `binding-${siteId}`;
-            const visibilityId = `visibility-${siteId}`;
             const petLabel = siteId === "deepseek" ? copy.deepseekPet : copy.geminiPet;
             const selectedValue = snapshot.sitePetBindings[siteId] ?? "";
             return `
@@ -516,47 +745,10 @@ function renderHomePage(snapshot: PopupSnapshot): string {
                   ${petOptions}
                 </select>
               </label>
-              <label class="toggle-row">
-                <span>${localizeSite(locale, siteId)} ${copy.showPet}</span>
-                <input id="${visibilityId}" type="checkbox" ${snapshot.sitePetVisibility[siteId] !== false ? "checked" : ""} />
-              </label>
               <script type="application/json" data-binding-value="${siteId}">${escapeHtml(selectedValue)}</script>
             `;
           })
           .join("")}
-      </div>
-    </section>
-
-    <section class="popup-card">
-      <div class="card-title">${copy.animationTitle}</div>
-      <div class="speed-controls">
-        <label class="field-label speed-inline" for="animation-speed-range">
-          <div class="speed-topline">
-            <span>${copy.animationTitle}</span>
-            <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
-          </div>
-          <input
-            id="animation-speed-range"
-            class="speed-range"
-            type="range"
-            min="${minAnimationSpeed}"
-            max="${maxAnimationSpeed}"
-            step="${animationSpeedSliderStep}"
-            value="${animationSpeed}"
-          />
-        </label>
-        <label class="field-label speed-fine" for="animation-speed-number">
-          <span>${copy.animationFine}</span>
-          <input
-            id="animation-speed-number"
-            type="number"
-            min="${minAnimationSpeed}"
-            max="${maxAnimationSpeed}"
-            step="${animationSpeedFineStep}"
-            value="${animationSpeed.toFixed(2)}"
-          />
-        </label>
-        <div class="helper-text">${copy.animationHint}</div>
       </div>
     </section>
 
@@ -570,9 +762,36 @@ function renderHomePage(snapshot: PopupSnapshot): string {
             <span class="upload-primary">${copy.importZip}</span>
             <span class="upload-secondary">${copy.importDropHint}</span>
           </label>
+          ${renderImportFeedback()}
         </div>
         <button id="manage-pets" class="secondary-button" type="button">${copy.managePetsTitle}</button>
-        <button id="clear-cache" class="secondary-button" type="button" ${snapshot.pets.length ? "" : "disabled"}>${copy.clearPetData}</button>
+      </div>
+    </section>
+
+    <section class="popup-card">
+      <div class="card-title">${copy.animationTitle}</div>
+      <div class="speed-controls">
+        <div class="field-label speed-inline">
+          <div class="speed-topline">
+            <span>${copy.animationTitle}</span>
+            <div class="speed-value-group">
+              <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
+              <div class="speed-nudge-group" aria-label="${copy.animationTitle}">
+                <button id="animation-speed-decrease" class="speed-nudge-button" type="button" aria-label="Decrease speed">−</button>
+                <button id="animation-speed-increase" class="speed-nudge-button" type="button" aria-label="Increase speed">+</button>
+              </div>
+            </div>
+          </div>
+          <input
+            id="animation-speed-range"
+            class="speed-range"
+            type="range"
+            min="${minAnimationSpeed}"
+            max="${maxAnimationSpeed}"
+            step="${animationSpeedSliderStep}"
+            value="${animationSpeed}"
+          />
+        </div>
       </div>
     </section>
 
@@ -593,15 +812,15 @@ function renderManagePage(snapshot: PopupSnapshot): string {
   const pageCount = Math.max(1, Math.ceil(snapshot.pets.length / managePetsPageSize));
   const start = popupViewState.managePageIndex * managePetsPageSize;
   const pets = snapshot.pets.slice(start, start + managePetsPageSize);
+  const showDeleteMode = popupViewState.manageDeleteMode;
 
   return `
     <section class="popup-card">
-      <div class="header-row">
-        <button id="manage-back" class="icon-button" type="button" aria-label="${copy.back}">←</button>
-        <div class="card-title">${copy.managePetsTitle}</div>
-        <div></div>
+      <div class="manage-header">
+        <button id="manage-back" class="icon-button manage-back-button" type="button" aria-label="${copy.back}">←</button>
+        <h2 class="manage-header-title">${copy.managePetsTitle}</h2>
+        <div class="manage-header-actions"></div>
       </div>
-      <div class="helper-text">${copy.manageHint}</div>
       <div class="pet-grid">
         ${pets
           .map((pet) => {
@@ -609,45 +828,78 @@ function renderManagePage(snapshot: PopupSnapshot): string {
               ? pet.boundSites.map((siteId) => localizeSite(locale, siteId)).join(" / ")
               : copy.unbound;
             return `
-              <label class="pet-card" data-pet-card="true">
-                <div class="pet-card-header">
-                  <input class="pet-card-check" data-pet-select="${escapeHtml(pet.id)}" type="checkbox" ${
+              <div class="pet-card" data-pet-card="true" data-manage-pet-id="${escapeHtml(pet.id)}">
+                ${showDeleteMode ? `
+                  <div class="toggle-row">
+                    <span></span>
+                    <input class="pet-card-check" data-pet-select="${escapeHtml(pet.id)}" type="checkbox" ${
                     popupViewState.selectedPetIds.has(pet.id) ? "checked" : ""
                   } />
-                  <span class="pet-card-badge">${pet.boundSites.length ? boundSites : copy.unbound}</span>
+                  </div>
+                ` : ""}
+                <div class="pet-card-preview">
+                  ${renderStaticPreview(pet, locale)}
                 </div>
                 <div class="pet-card-name">${escapeHtml(pet.displayName)}</div>
-                <div class="pet-card-site">${escapeHtml(boundSites)}</div>
-              </label>
+                <div class="pet-card-sites">
+                  <div class="pet-card-sites-title">${escapeHtml(boundSites)}</div>
+                </div>
+              </div>
             `;
           })
           .join("")}
       </div>
-      <div class="footer-row">
+      <div class="manage-pager">
         <button id="manage-prev-page" class="page-button" type="button" ${
           popupViewState.managePageIndex === 0 ? "disabled" : ""
         }>${copy.previousPage}</button>
-        <div id="manage-page-indicator">${popupViewState.managePageIndex + 1} / ${pageCount}</div>
+        <div id="manage-page-indicator" class="manage-page-indicator">${popupViewState.managePageIndex + 1} / ${pageCount}</div>
         <button id="manage-next-page" class="page-button" type="button" ${
           popupViewState.managePageIndex >= pageCount - 1 ? "disabled" : ""
         }>${copy.nextPage}</button>
       </div>
-      <div class="footer-row">
-        <div id="manage-selection-count">${translate(locale, "selectedCount", {
-          count: String(popupViewState.selectedPetIds.size),
-        })}</div>
-        <button id="manage-delete-selected" class="primary-button" type="button" ${
-          popupViewState.selectedPetIds.size ? "" : "disabled"
-        }>${copy.deleteSelected}</button>
-      </div>
+      ${
+        showDeleteMode
+          ? `
+            <div class="manage-actions">
+              <div id="manage-selection-count" class="manage-selection-count">${translate(locale, "selectedCount", {
+                count: String(popupViewState.selectedPetIds.size),
+              })}</div>
+            </div>
+            <div class="manage-batch-actions">
+              <button id="manage-close-multi" class="secondary-button manage-close-button" type="button" aria-label="${copy.close}">×</button>
+              <button id="manage-batch-export" class="secondary-button" type="button" ${
+                popupViewState.selectedPetIds.size ? "" : "disabled"
+              }>${copy.batchExport}</button>
+              <button id="manage-delete-selected" class="primary-button" type="button" ${
+                popupViewState.selectedPetIds.size ? "" : "disabled"
+              }>${copy.batchDelete}</button>
+            </div>
+          `
+          : ""
+      }
     </section>
   `;
 }
 
 function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
-  const { locale, feedbackMessage } = popupViewState;
+  popupViewState.currentAnimationSpeed = clampAnimationSpeed(snapshot.animationSpeed);
+  const { locale } = popupViewState;
   const copy = localeCopy[locale];
   const body = popupViewState.page === "manage" ? renderManagePage(snapshot) : renderHomePage(snapshot);
+  const contextMenu = popupViewState.page === "manage" && popupViewState.manageContextMenu
+    ? `
+      <div
+        id="manage-context-menu"
+        class="manage-context-menu"
+        style="left:${popupViewState.manageContextMenu.x}px; top:${popupViewState.manageContextMenu.y}px;"
+      >
+        <button type="button" data-manage-menu="multi-select">${copy.multiSelect}</button>
+        <button type="button" data-manage-menu="export">${copy.exportPet}</button>
+        <button type="button" data-manage-menu="delete">${copy.deletePet}</button>
+      </div>
+    `
+    : "";
 
   root.innerHTML = `
     <style>${popupStyles}</style>
@@ -659,8 +911,8 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
           <button id="locale-zh" type="button" data-locale="zh" data-active="${locale === "zh"}">中</button>
         </div>
       </div>
-      <div id="status" class="feedback-banner">${escapeHtml(feedbackMessage)}</div>
       ${body}
+      ${contextMenu}
     </div>
   `;
 
@@ -679,16 +931,86 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   if (popupViewState.page === "manage") {
     root.querySelector("#manage-back")?.addEventListener("click", () => {
       popupViewState.page = "home";
+      popupViewState.manageDeleteMode = false;
+      popupViewState.manageContextMenu = null;
+      popupViewState.selectedPetIds.clear();
+      renderPopup(root, snapshot);
+    });
+    root.querySelector("#manage-close-multi")?.addEventListener("click", () => {
+      popupViewState.manageDeleteMode = false;
+      popupViewState.selectedPetIds.clear();
       renderPopup(root, snapshot);
     });
     root.querySelector("#manage-prev-page")?.addEventListener("click", () => {
       popupViewState.managePageIndex = Math.max(0, popupViewState.managePageIndex - 1);
+      popupViewState.manageContextMenu = null;
       renderPopup(root, snapshot);
     });
     root.querySelector("#manage-next-page")?.addEventListener("click", () => {
       popupViewState.managePageIndex += 1;
       clampManagePage(snapshot);
+      popupViewState.manageContextMenu = null;
       renderPopup(root, snapshot);
+    });
+    root.querySelectorAll<HTMLElement>("[data-manage-pet-id]").forEach((card) => {
+      card.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        const petId = card.dataset.managePetId;
+        if (!petId) {
+          return;
+        }
+        const shellRect = root.querySelector(".popup-shell")?.getBoundingClientRect();
+        popupViewState.manageContextMenu = {
+          petId,
+          x: Math.max(12, event.clientX - (shellRect?.left ?? 0)),
+          y: Math.max(12, event.clientY - (shellRect?.top ?? 0)),
+        };
+        renderPopup(root, snapshot);
+      });
+    });
+    root.querySelector("#manage-context-menu")?.addEventListener("click", async (event) => {
+      const target = event.target as HTMLElement | null;
+      const action = target?.getAttribute("data-manage-menu");
+      const menuPetId = popupViewState.manageContextMenu?.petId;
+      if (!action || !menuPetId) {
+        return;
+      }
+
+      if (action === "multi-select") {
+        popupViewState.manageDeleteMode = true;
+        popupViewState.selectedPetIds.add(menuPetId);
+        popupViewState.manageContextMenu = null;
+        renderPopup(root, snapshot);
+        return;
+      }
+
+      if (action === "export") {
+        const exportedName = await exportPetPackage(snapshot, menuPetId);
+        popupViewState.feedbackMessage = exportedName
+          ? translate(locale, "exportedFeedback", { pet: exportedName })
+          : "";
+        popupViewState.manageContextMenu = null;
+        renderPopup(root, snapshot);
+        return;
+      }
+
+      if (action === "delete") {
+        await chrome.runtime.sendMessage({
+          type: messageTypes.deletePets,
+          payload: { petIds: [menuPetId] },
+        });
+        popupViewState.manageContextMenu = null;
+        const nextSnapshot = await requestSnapshot();
+        clampManagePage(nextSnapshot);
+        renderPopup(root, nextSnapshot);
+      }
+    });
+    root.querySelector("#manage-batch-export")?.addEventListener("click", async () => {
+      const petIds = [...popupViewState.selectedPetIds];
+      if (!petIds.length) {
+        return;
+      }
+      await exportSelectedPets(snapshot, petIds);
     });
     root.querySelectorAll<HTMLInputElement>("[data-pet-select]").forEach((checkbox) => {
       checkbox.addEventListener("change", () => {
@@ -711,12 +1033,19 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
         payload: { petIds },
       });
       popupViewState.selectedPetIds.clear();
-      popupViewState.feedbackMessage = translate(locale, "deletedFeedback", {
-        count: String(petIds.length),
-      });
+      popupViewState.manageDeleteMode = false;
+      popupViewState.manageContextMenu = null;
       const nextSnapshot = await requestSnapshot();
       clampManagePage(nextSnapshot);
       renderPopup(root, nextSnapshot);
+    });
+    root.addEventListener("click", (event) => {
+      if (!(event.target as HTMLElement | null)?.closest("#manage-context-menu")) {
+        if (popupViewState.manageContextMenu) {
+          popupViewState.manageContextMenu = null;
+          renderPopup(root, snapshot);
+        }
+      }
     });
     return;
   }
@@ -732,31 +1061,10 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
           payload: { siteId, petId },
         });
         const nextSnapshot = await requestSnapshot();
-        popupViewState.feedbackMessage = petId
-          ? translate(locale, "boundFeedback", {
-              site: localizeSite(locale, siteId),
-              pet: getPetDisplayName(nextSnapshot, petId),
-            })
-          : translate(locale, "unboundFeedback", {
-              site: localizeSite(locale, siteId),
-            });
         renderPopup(root, nextSnapshot);
       });
     }
 
-    const visibilityToggle = root.querySelector<HTMLInputElement>(`#visibility-${siteId}`);
-    visibilityToggle?.addEventListener("change", async () => {
-      await chrome.runtime.sendMessage({
-        type: messageTypes.setSitePetVisibility,
-        payload: { siteId, visible: visibilityToggle.checked },
-      });
-      popupViewState.feedbackMessage = translate(locale, "visibilityFeedback", {
-        site: localizeSite(locale, siteId),
-        state: visibilityToggle.checked ? copy.displayOn : copy.displayOff,
-      });
-      const nextSnapshot = await requestSnapshot();
-      renderPopup(root, nextSnapshot);
-    });
   });
 
   root.querySelector<HTMLInputElement>("#overlay-toggle")?.addEventListener("change", async (event) => {
@@ -768,15 +1076,12 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   });
 
   const rangeInput = root.querySelector<HTMLInputElement>("#animation-speed-range");
-  const numberInput = root.querySelector<HTMLInputElement>("#animation-speed-number");
   const valueLabel = root.querySelector<HTMLElement>("#animation-speed-value");
   const syncAnimationInputs = (nextSpeed: number) => {
     const clamped = clampAnimationSpeed(nextSpeed);
+    popupViewState.currentAnimationSpeed = clamped;
     if (rangeInput) {
       rangeInput.value = clamped.toFixed(2);
-    }
-    if (numberInput) {
-      numberInput.value = clamped.toFixed(2);
     }
     valueLabel?.replaceChildren(document.createTextNode(formatAnimationSpeed(clamped)));
     return clamped;
@@ -789,6 +1094,7 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     });
     const nextSnapshot = await requestSnapshot();
     nextSnapshot.animationSpeed = clampAnimationSpeed(result?.speed ?? speed);
+    popupViewState.currentAnimationSpeed = nextSnapshot.animationSpeed;
     renderPopup(root, nextSnapshot);
   };
 
@@ -798,15 +1104,16 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   rangeInput?.addEventListener("change", async () => {
     await commitAnimationSpeed(Number.parseFloat(rangeInput.value));
   });
-  numberInput?.addEventListener("input", () => {
-    syncAnimationInputs(Number.parseFloat(numberInput.value));
+  root.querySelector<HTMLButtonElement>("#animation-speed-decrease")?.addEventListener("click", async () => {
+    await commitAnimationSpeed(popupViewState.currentAnimationSpeed - animationSpeedFineStep);
   });
-  numberInput?.addEventListener("change", async () => {
-    await commitAnimationSpeed(Number.parseFloat(numberInput.value));
+  root.querySelector<HTMLButtonElement>("#animation-speed-increase")?.addEventListener("click", async () => {
+    await commitAnimationSpeed(popupViewState.currentAnimationSpeed + animationSpeedFineStep);
   });
 
   root.querySelector("#manage-pets")?.addEventListener("click", () => {
     popupViewState.page = "manage";
+    popupViewState.manageContextMenu = null;
     clampManagePage(snapshot);
     renderPopup(root, snapshot);
   });
@@ -841,21 +1148,19 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     await batchImportFiles(root, snapshot, Array.from(event.dataTransfer?.files ?? []));
   });
 
-  root.querySelector("#clear-cache")?.addEventListener("click", async () => {
-    await chrome.runtime.sendMessage({ type: messageTypes.clearPets });
-    popupViewState.feedbackMessage = copy.clearPetDataFeedback;
-    const nextSnapshot = await requestSnapshot();
-    renderPopup(root, nextSnapshot);
-  });
 }
 
 async function mountPopup(root: HTMLElement): Promise<void> {
   popupViewState.locale = await resolveInitialLocale();
   popupViewState.page = "home";
   popupViewState.dragActive = false;
+  popupViewState.currentAnimationSpeed = defaultAnimationSpeed;
   popupViewState.managePageIndex = 0;
+  popupViewState.manageDeleteMode = false;
+  popupViewState.manageContextMenu = null;
   popupViewState.selectedPetIds.clear();
   const snapshot = await requestSnapshot();
+  popupViewState.currentAnimationSpeed = clampAnimationSpeed(snapshot.animationSpeed);
   renderPopup(root, snapshot);
 }
 

@@ -113,7 +113,7 @@ export interface ClearPetsMessage {
 export interface PopupSnapshotMessage {
   type: typeof messageTypes.popupSnapshot;
   payload: {
-    pets: Array<{ id: string; displayName: string; boundSites: SiteId[] }>;
+    pets: Array<{ id: string; displayName: string; boundSites: SiteId[]; spritesheetDataUrl?: string }>;
     sitePetBindings: Partial<Record<SiteId, string>>;
     sitePetVisibility: Partial<Record<SiteId, boolean>>;
     overlayVisible: boolean;

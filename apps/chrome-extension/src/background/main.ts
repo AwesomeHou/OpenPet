@@ -97,6 +97,7 @@ function createPopupPets(
   return pets.map((pet) => ({
     id: pet.id,
     displayName: pet.displayName,
+    spritesheetDataUrl: pet.spritesheetDataUrl,
     boundSites: (Object.entries(sitePetBindings) as Array<[SiteId, string]>)
       .filter(([, petId]) => petId === pet.id)
       .map(([siteId]) => siteId),
