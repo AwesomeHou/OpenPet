@@ -687,7 +687,8 @@ const localeCopy = {
     importZip: "Import pet zip",
     importFolder: "Import pet folder",
     importDropHint: "Click to choose .zip files, or drop multiple .zip files here",
-    importFolderHint: "Choose a root folder and import each direct pet subfolder as one pet",
+    importFolderHint:
+      "Choose a pet folder directly, or choose a parent folder to import each direct pet subfolder",
     importPreviewUnavailable: "Preview unavailable",
     clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
@@ -751,7 +752,7 @@ const localeCopy = {
     importZip: "导入宠物 zip",
     importFolder: "导入宠物文件夹",
     importDropHint: "点击选择 .zip 文件，也可拖入多个 .zip 文件",
-    importFolderHint: "选择一个根目录后，每个直接宠物子文件夹都会作为一只宠物导入",
+    importFolderHint: "可直接选择单个宠物文件夹，或选择父目录批量导入其直接宠物子文件夹",
     importPreviewUnavailable: "暂无预览",
     clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
@@ -920,14 +921,34 @@ async function createFolderImportPayload(
   preflightFailures: ImportFailureItem[];
 }> {
   const groups = new Map<string, Array<{ path: string; file: File }>>();
-
-  for (const file of files) {
+  const entries = files.map((file) => {
     const relativePath = file.webkitRelativePath || file.name;
-    const segments = relativePath.split(/[\\/]/).filter(Boolean);
-    if (segments.length < 3) {
+    return {
+      file,
+      segments: relativePath.split(/[\\/]/).filter(Boolean),
+    };
+  });
+  const isSinglePetFolderSelection = entries.some(
+    (entry) => entry.segments.length === 2 && /^pet\.json$/i.test(entry.segments[1] ?? "")
+  );
+
+  for (const entry of entries) {
+    const { file, segments } = entry;
+    if (isSinglePetFolderSelection) {
+      if (segments.length < 2) {
+        continue;
+      }
+      const folderName = segments[0];
+      const petRelativePath = segments.slice(1).join("/");
+      const group = groups.get(folderName) ?? [];
+      group.push({ path: petRelativePath, file });
+      groups.set(folderName, group);
       continue;
     }
 
+    if (segments.length < 3) {
+      continue;
+    }
     const folderName = segments[1];
     const petRelativePath = segments.slice(2).join("/");
     const group = groups.get(folderName) ?? [];
@@ -940,10 +961,10 @@ async function createFolderImportPayload(
       payloadFiles: [],
       preflightFailures: [
         {
-          filename: files[0]?.webkitRelativePath?.split(/[\\/]/).filter(Boolean)[0] ?? "folder",
+          filename: entries[0]?.segments[0] ?? "folder",
           code: "E_FOLDER_INVALID_STRUCTURE",
           error:
-            "Selected folder must contain complete pet folders as direct children, each including pet.json and a spritesheet file.",
+            "Selected folder must either be a pet folder containing pet.json, or contain complete pet folders as direct children.",
         },
       ],
     };

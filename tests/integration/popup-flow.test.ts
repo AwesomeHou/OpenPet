@@ -442,6 +442,59 @@ describe("popup flow", () => {
     });
   });
 
+  test("supports folder import when selecting a pet folder itself", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { files?: Array<{ filename: string }> } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      if (message.type === messageTypes.batchImportPets) {
+        return {
+          ok: true,
+          importedPetIds: ["deepseek"],
+          overwrittenPetIds: [],
+          failures: [],
+        };
+      }
+
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#import-mode-folder")?.click();
+
+    const folderInput = root.querySelector("#pet-folder") as HTMLInputElement;
+    const petJson = new File(['{"id":"deepseek","displayName":"DeepSeek","spritesheetPath":"spritesheet.webp"}'], "pet.json", {
+      type: "application/json",
+    });
+    Object.defineProperty(petJson, "webkitRelativePath", {
+      value: "deepseek/pet.json",
+      configurable: true,
+    });
+    const sprite = new File(["A"], "spritesheet.webp", { type: "image/webp" });
+    Object.defineProperty(sprite, "webkitRelativePath", {
+      value: "deepseek/spritesheet.webp",
+      configurable: true,
+    });
+    Object.defineProperty(folderInput, "files", {
+      value: [petJson, sprite],
+      configurable: true,
+    });
+
+    folderInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: expect.arrayContaining([expect.objectContaining({ filename: "deepseek.zip" })]),
+        },
+      });
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("成功导入 1");
+    });
+  });
+
   test("shows a coded failure when folder import structure is invalid", async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === messageTypes.popupSnapshot) {
