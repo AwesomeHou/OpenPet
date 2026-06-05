@@ -215,7 +215,8 @@ describe("popup flow", () => {
     root.querySelector<HTMLButtonElement>("#manage-pets")?.click();
 
     expect(root.textContent).toContain("Manage Pets");
-    expect((root.querySelector("#manage-back") as HTMLButtonElement | null)?.textContent).toContain("←");
+    expect(root.querySelector("#manage-back img")).not.toBeNull();
+    expect(root.querySelector("#settings-toggle")).toBeNull();
     expect(root.textContent).not.toContain("Pet-first view with paging and batch delete.");
     expect(root.querySelectorAll('[data-pet-card="true"]')).toHaveLength(9);
     expect(root.querySelectorAll(".pet-card-preview-sprite")).toHaveLength(9);
@@ -344,7 +345,7 @@ describe("popup flow", () => {
     const root = document.getElementById("app")!;
     await mountPopup(root);
 
-    const dropzone = root.querySelector("#pet-dropzone") as HTMLLabelElement;
+    const dropzone = root.querySelector("#pet-dropzone") as HTMLElement;
     const files = [
       new File(["zip"], "doodlebob.zip", { type: "application/zip" }),
       new File(["zip"], "boba.zip", { type: "application/zip" }),
@@ -397,6 +398,7 @@ describe("popup flow", () => {
 
     const root = document.getElementById("app")!;
     await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#import-mode-folder")?.click();
 
     const folderInput = root.querySelector("#pet-folder") as HTMLInputElement;
     const petJsonOne = new File(['{"id":"deepseek","displayName":"DeepSeek","spritesheetPath":"spritesheet.webp"}'], "pet.json", { type: "application/json" });
@@ -451,6 +453,7 @@ describe("popup flow", () => {
 
     const root = document.getElementById("app")!;
     await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#import-mode-folder")?.click();
 
     const folderInput = root.querySelector("#pet-folder") as HTMLInputElement;
     const invalidFile = new File(["ignored"], "README.txt", { type: "text/plain" });
@@ -601,5 +604,10 @@ describe("popup flow", () => {
     expect(issuesLink?.href).toBe("https://github.com/AwesomeHou/OpenPet/issues");
     expect(root.textContent).toContain("Feedback");
     expect(root.textContent).toContain("GitHub Issues");
+    expect(root.querySelector(".popup-logo")).not.toBeNull();
+    expect(root.querySelector("#settings-toggle img")).not.toBeNull();
+    expect(root.querySelector("#pet-dropzone img")).not.toBeNull();
+    expect(root.querySelector("#import-mode-zip")).not.toBeNull();
+    expect(root.querySelector("#import-mode-folder")).not.toBeNull();
   });
 });

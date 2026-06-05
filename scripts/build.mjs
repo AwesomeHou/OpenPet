@@ -54,3 +54,13 @@ await fs.cp(
   path.join(distDir, "assets"),
   { recursive: true }
 );
+await fs.cp(
+  path.join(root, "assets/icons/ui"),
+  path.join(distDir, "assets/icons/ui"),
+  { recursive: true }
+);
+await fs.cp(
+  path.join(root, "assets/brand"),
+  path.join(distDir, "assets/brand"),
+  { recursive: true }
+);

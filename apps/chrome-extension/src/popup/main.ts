@@ -32,6 +32,7 @@ type PopupViewState = {
   locale: PopupLocale;
   feedbackMessage: string;
   dragActive: boolean;
+  importMode: "zip" | "folder";
   page: PopupPage;
   settingsOpen: boolean;
   currentAnimationSpeed: number;
@@ -60,6 +61,7 @@ const popupViewState: PopupViewState = {
   locale: "en",
   feedbackMessage: "",
   dragActive: false,
+  importMode: "zip",
   page: "home",
   settingsOpen: false,
   currentAnimationSpeed: defaultAnimationSpeed,
@@ -133,6 +135,19 @@ const popupStyles = `
     font-size: 18px;
     font-weight: 700;
   }
+  .popup-title-group {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+  .popup-logo {
+    width: 30px;
+    height: 30px;
+    object-fit: contain;
+    flex-shrink: 0;
+    filter: drop-shadow(0 4px 10px rgba(121, 85, 56, 0.16));
+  }
   .header-icon-button,
   .secondary-button,
   .primary-button,
@@ -185,6 +200,12 @@ const popupStyles = `
     font-size: 13px;
     color: #4f3a2b;
   }
+  .field-label-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+  }
   .field-label span,
   .toggle-row span {
     font-weight: 600;
@@ -226,12 +247,72 @@ const popupStyles = `
     border: 1.5px dashed rgba(141, 97, 63, 0.35);
     background: rgba(255, 253, 249, 0.92);
   }
+  .upload-dropzone-content,
+  .button-with-icon,
+  .menu-button-content {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .upload-dropzone-content {
+    justify-content: flex-start;
+  }
   .upload-dropzone[data-drag-active="true"] {
     border-color: rgba(141, 97, 63, 0.72);
     background: #fff8ef;
   }
   .upload-primary {
     font-weight: 600;
+  }
+  .ui-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+    display: inline-block;
+  }
+  .header-icon {
+    width: 18px;
+    height: 18px;
+  }
+  .back-icon {
+    width: 18px;
+    height: 18px;
+  }
+  .button-icon {
+    width: 16px;
+    height: 16px;
+  }
+  .upload-primary-text {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .import-mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    background: rgba(82, 57, 36, 0.08);
+    width: fit-content;
+    flex-shrink: 0;
+  }
+  .import-mode-toggle button {
+    border: 0;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    color: #6b5441;
+    background: transparent;
+  }
+  .import-mode-toggle button[data-active="true"] {
+    background: #ffffff;
+    color: #2f241b;
+  }
+  .import-entry {
+    position: relative;
   }
   .busy-indicator {
     display: inline-flex;
@@ -289,6 +370,7 @@ const popupStyles = `
   }
   .speed-nudge-group {
     display: inline-flex;
+    flex-direction: column;
     align-items: center;
     gap: 4px;
   }
@@ -316,25 +398,33 @@ const popupStyles = `
     top: 66px;
     right: 18px;
     z-index: 14;
-    width: 244px;
+    width: min(272px, calc(100% - 36px));
     border-radius: 18px;
     padding: 14px;
     display: grid;
-    gap: 12px;
+    gap: 10px;
     background: rgba(255, 253, 249, 0.98);
     border: 1px solid rgba(109, 78, 53, 0.14);
     box-shadow: 0 16px 32px rgba(84, 60, 41, 0.16);
   }
-  .settings-section {
+  .settings-row {
     display: grid;
-    gap: 8px;
+    grid-template-columns: 62px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
   }
-  .settings-section-title {
+  .settings-row[data-settings-row="speed"] {
+    align-items: center;
+  }
+  .settings-row-label {
     font-size: 12px;
     font-weight: 700;
     color: #6a4f39;
     text-transform: uppercase;
     letter-spacing: 0.05em;
+  }
+  .settings-row-control {
+    min-width: 0;
   }
   .settings-locale-toggle {
     display: inline-flex;
@@ -342,6 +432,7 @@ const popupStyles = `
     padding: 4px;
     border-radius: 999px;
     background: rgba(82, 57, 36, 0.08);
+    justify-self: end;
   }
   .settings-locale-toggle button {
     border: 0;
@@ -357,11 +448,35 @@ const popupStyles = `
     background: #ffffff;
     color: #2f241b;
   }
+  .settings-speed-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .settings-speed-row .speed-range {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .settings-speed-value-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
   .settings-link {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     text-decoration: none;
+    justify-self: end;
+    min-height: 34px;
+    padding-inline: 14px;
+  }
+  .settings-link,
+  .secondary-button,
+  .primary-button {
+    justify-content: center;
   }
   .pet-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -563,12 +678,16 @@ const localeCopy = {
     languageTitle: "Language",
     feedbackTitle: "Feedback",
     githubIssues: "GitHub Issues",
+    importPet: "Import pet",
+    importModeZip: "ZIP",
+    importModeFolder: "Folder",
     overlayVisible: "Overlay visible",
     petStore: "Pet Store",
     companionNote: "For a persistent desktop experience, a companion app will be available later.",
     importZip: "Import pet zip",
     importFolder: "Import pet folder",
-    importDropHint: "Click to choose .zip files or import pet folders, or drop .zip files here",
+    importDropHint: "Click to choose .zip files, or drop multiple .zip files here",
+    importFolderHint: "Choose a root folder and import each direct pet subfolder as one pet",
     importPreviewUnavailable: "Preview unavailable",
     clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
@@ -623,12 +742,16 @@ const localeCopy = {
     languageTitle: "语言",
     feedbackTitle: "反馈通道",
     githubIssues: "GitHub Issues",
+    importPet: "导入宠物",
+    importModeZip: "ZIP",
+    importModeFolder: "文件夹",
     overlayVisible: "显示宠物浮层",
     petStore: "宠物商店",
     companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
     importZip: "导入宠物 zip",
     importFolder: "导入宠物文件夹",
-    importDropHint: "点击选择 .zip 文件或导入宠物文件夹，也可拖入多个 .zip 文件",
+    importDropHint: "点击选择 .zip 文件，也可拖入多个 .zip 文件",
+    importFolderHint: "选择一个根目录后，每个直接宠物子文件夹都会作为一只宠物导入",
     importPreviewUnavailable: "暂无预览",
     clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
@@ -744,6 +867,18 @@ function escapeHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function getUiIconUrl(filename: string): string {
+  return globalThis.chrome?.runtime?.getURL?.(`assets/icons/ui/${filename}`) ?? `assets/icons/ui/${filename}`;
+}
+
+function renderIcon(filename: string, alt = "", className = "ui-icon"): string {
+  return `<img class="${className}" src="${escapeHtml(getUiIconUrl(filename))}" alt="${escapeHtml(alt)}" />`;
+}
+
+function renderIconLabel(filename: string, label: string, className = "button-icon"): string {
+  return `<span class="button-with-icon">${renderIcon(filename, "", className)}<span>${escapeHtml(label)}</span></span>`;
 }
 
 function getPetDisplayName(snapshot: PopupSnapshot, petId: string): string {
@@ -1059,6 +1194,10 @@ function renderHomePage(snapshot: PopupSnapshot): string {
   const locale = popupViewState.locale;
   const copy = localeCopy[locale];
   const petOptions = createPetOptions(snapshot, locale);
+  const importMode = popupViewState.importMode;
+  const importBusy = popupViewState.pendingAction?.startsWith("import-");
+  const importTitle = copy.importPet;
+  const importHint = importMode === "zip" ? copy.importDropHint : copy.importFolderHint;
   return `
     <section class="popup-card">
       <div class="card-title">${copy.homeTitle}</div>
@@ -1090,22 +1229,29 @@ function renderHomePage(snapshot: PopupSnapshot): string {
       <div class="card-title">${copy.dataTitle}</div>
       <div class="field-grid">
         <div class="field-label">
-          <span>${copy.importZip}</span>
+          <div class="field-label-heading">
+            <span>${importTitle}</span>
+            <div class="import-mode-toggle" aria-label="${escapeHtml(copy.dataTitle)}">
+              <button id="import-mode-zip" type="button" data-active="${importMode === "zip"}">${copy.importModeZip}</button>
+              <button id="import-mode-folder" type="button" data-active="${importMode === "folder"}">${copy.importModeFolder}</button>
+            </div>
+          </div>
           <input id="pet-file" class="upload-input" type="file" accept=".zip" multiple />
           <input id="pet-folder" class="upload-input" type="file" webkitdirectory directory multiple />
-          <label id="pet-dropzone" class="upload-dropzone" data-drag-active="${popupViewState.dragActive}" for="pet-file" aria-busy="${
-            isPendingAction("import-files") ? "true" : "false"
-          }">
-            <span class="upload-primary">${
-              isPendingAction("import-files") ? renderBusyLabel(copy.importPending) : copy.importZip
+          <div class="import-entry">
+          <div id="pet-dropzone" class="upload-dropzone" data-drag-active="${popupViewState.dragActive}" aria-busy="${
+            importBusy ? "true" : "false"
+          }" role="button" tabindex="0">
+            <span class="upload-primary upload-dropzone-content">${
+              importBusy
+                ? renderBusyLabel(copy.importPending)
+                : `<span class="upload-primary-text">${renderIcon("icon-import.svg", "", "button-icon")}<span>${escapeHtml(
+                    importTitle
+                  )}</span></span>`
             }</span>
-            <span class="upload-secondary">${copy.importDropHint}</span>
-          </label>
-          <button id="pet-folder-button" class="secondary-button" type="button" ${
-            isPendingAction("import-folder") ? "disabled" : ""
-          }>${
-            isPendingAction("import-folder") ? renderBusyLabel(copy.importPending) : copy.importFolder
-          }</button>
+            <span class="upload-secondary">${importHint}</span>
+          </div>
+          </div>
           ${renderImportFeedback()}
         </div>
         <button id="manage-pets" class="secondary-button" type="button">${copy.managePetsTitle}</button>
@@ -1134,7 +1280,11 @@ function renderManagePage(snapshot: PopupSnapshot): string {
   return `
     <section class="popup-card">
       <div class="manage-header">
-        <button id="manage-back" class="icon-button manage-back-button" type="button" aria-label="${copy.back}">←</button>
+        <button id="manage-back" class="icon-button manage-back-button" type="button" aria-label="${copy.back}">${renderIcon(
+          "icon-back.svg",
+          "",
+          "back-icon"
+        )}</button>
         <h2 class="manage-header-title">${copy.managePetsTitle}</h2>
         <div class="manage-header-actions"></div>
       </div>
@@ -1187,14 +1337,14 @@ function renderManagePage(snapshot: PopupSnapshot): string {
               }>${
                 isPendingAction("manage-export-batch")
                   ? renderBusyLabel(copy.exportPending)
-                  : copy.batchExport
+                  : renderIconLabel("icon-export.svg", copy.batchExport)
               }</button>
               <button id="manage-delete-selected" class="primary-button" type="button" ${
                 popupViewState.selectedPetIds.size && !isPendingAction("manage-delete-batch") ? "" : "disabled"
               }>${
                 isPendingAction("manage-delete-batch")
                   ? renderBusyLabel(copy.deletePending)
-                  : copy.batchDelete
+                  : renderIconLabel("icon-delete.svg", copy.batchDelete)
               }</button>
             </div>
           `
@@ -1216,26 +1366,16 @@ function renderSettingsPanel(): string {
 
   return `
     <div id="settings-panel" class="settings-panel">
-      <div class="settings-section">
-        <div class="settings-section-title">${copy.languageTitle}</div>
-        <div class="settings-locale-toggle" aria-label="${copy.languageTitle}">
+      <div class="settings-row">
+        <div class="settings-row-label">${copy.languageTitle}</div>
+        <div class="settings-row-control settings-locale-toggle" aria-label="${copy.languageTitle}">
           <button id="locale-en" type="button" data-locale="en" data-active="${locale === "en"}">EN</button>
           <button id="locale-zh" type="button" data-locale="zh" data-active="${locale === "zh"}">中</button>
         </div>
       </div>
-      <div class="settings-section">
-        <div class="settings-section-title">${copy.animationTitle}</div>
-        <div class="field-label speed-inline">
-          <div class="speed-topline">
-            <span>${copy.animationTitle}</span>
-            <div class="speed-value-group">
-              <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
-              <div class="speed-nudge-group" aria-label="${copy.animationTitle}">
-                <button id="animation-speed-decrease" class="speed-nudge-button" type="button" aria-label="Decrease speed">−</button>
-                <button id="animation-speed-increase" class="speed-nudge-button" type="button" aria-label="Increase speed">+</button>
-              </div>
-            </div>
-          </div>
+        <div class="settings-row" data-settings-row="speed">
+        <div class="settings-row-label">${copy.animationTitle}</div>
+        <div class="settings-row-control settings-speed-row">
           <input
             id="animation-speed-range"
             class="speed-range"
@@ -1245,13 +1385,20 @@ function renderSettingsPanel(): string {
             step="${animationSpeedSliderStep}"
             value="${animationSpeed}"
           />
+          <div class="settings-speed-value-row">
+            <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
+            <div class="speed-nudge-group" aria-label="${copy.animationTitle}">
+              <button id="animation-speed-increase" class="speed-nudge-button" type="button" aria-label="Increase speed">+</button>
+              <button id="animation-speed-decrease" class="speed-nudge-button" type="button" aria-label="Decrease speed">−</button>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="settings-section">
-        <div class="settings-section-title">${copy.feedbackTitle}</div>
+      <div class="settings-row">
+        <div class="settings-row-label">${copy.feedbackTitle}</div>
         <a
           id="github-issues-link"
-          class="secondary-button settings-link"
+          class="secondary-button settings-link settings-row-control"
           href="https://github.com/AwesomeHou/OpenPet/issues"
           target="_blank"
           rel="noreferrer"
@@ -1279,12 +1426,16 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
         <button type="button" data-manage-menu="export" ${
           popupViewState.pendingAction ? "disabled" : ""
         }>${
-          isPendingAction("manage-export-single") ? renderBusyLabel(copy.exportPending) : copy.exportPet
+          isPendingAction("manage-export-single")
+            ? renderBusyLabel(copy.exportPending)
+            : renderIconLabel("icon-export.svg", copy.exportPet)
         }</button>
         <button type="button" data-manage-menu="delete" ${
           popupViewState.pendingAction ? "disabled" : ""
         }>${
-          isPendingAction("manage-delete-single") ? renderBusyLabel(copy.deletePending) : copy.deletePet
+          isPendingAction("manage-delete-single")
+            ? renderBusyLabel(copy.deletePending)
+            : renderIconLabel("icon-delete.svg", copy.deletePet)
         }</button>
       </div>
     `
@@ -1294,8 +1445,19 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     <style>${popupStyles}</style>
     <div class="popup-shell">
       <div class="popup-header">
-        <div class="popup-title">${copy.title}</div>
-        <button id="settings-toggle" class="header-icon-button" type="button" aria-label="${copy.settingsTitle}">⚙</button>
+        <div class="popup-title-group">
+          <img class="popup-logo" src="./assets/brand/openpet-logo-master.png" alt="OpenPet logo" />
+          <div class="popup-title">${copy.title}</div>
+        </div>
+        ${
+          popupViewState.page === "home"
+            ? `<button id="settings-toggle" class="header-icon-button" type="button" aria-label="${copy.settingsTitle}">${renderIcon(
+                "icon-settings.svg",
+                "",
+                "header-icon"
+              )}</button>`
+            : `<div class="header-icon-button" aria-hidden="true" style="visibility:hidden;"></div>`
+        }
       </div>
       ${body}
       ${renderSettingsPanel()}
@@ -1534,11 +1696,46 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
 
   root.querySelector("#manage-pets")?.addEventListener("click", () => {
     popupViewState.page = "manage";
+    popupViewState.settingsOpen = false;
     popupViewState.manageContextMenu = null;
     clampManagePage(snapshot);
     renderPopup(root, snapshot);
   });
 
+  root.querySelector<HTMLButtonElement>("#import-mode-zip")?.addEventListener("click", () => {
+    if (popupViewState.pendingAction) {
+      return;
+    }
+    popupViewState.importMode = "zip";
+    renderPopup(root, snapshot);
+  });
+  root.querySelector<HTMLButtonElement>("#import-mode-folder")?.addEventListener("click", () => {
+    if (popupViewState.pendingAction) {
+      return;
+    }
+    popupViewState.importMode = "folder";
+    renderPopup(root, snapshot);
+  });
+
+  root.querySelector<HTMLElement>("#pet-dropzone")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    if (popupViewState.pendingAction) {
+      return;
+    }
+    const targetId = popupViewState.importMode === "folder" ? "#pet-folder" : "#pet-file";
+    root.querySelector<HTMLInputElement>(targetId)?.click();
+  });
+  root.querySelector<HTMLElement>("#pet-dropzone")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    event.preventDefault();
+    if (popupViewState.pendingAction) {
+      return;
+    }
+    const targetId = popupViewState.importMode === "folder" ? "#pet-folder" : "#pet-file";
+    root.querySelector<HTMLInputElement>(targetId)?.click();
+  });
   root.querySelector<HTMLInputElement>("#pet-file")?.addEventListener("change", async (event) => {
     const input = event.currentTarget as HTMLInputElement;
     popupViewState.pendingAction = "import-files";
@@ -1547,9 +1744,6 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     await batchImportPayloadFiles(root, snapshot, payloadFiles);
     popupViewState.pendingAction = null;
     input.value = "";
-  });
-  root.querySelector<HTMLButtonElement>("#pet-folder-button")?.addEventListener("click", () => {
-    root.querySelector<HTMLInputElement>("#pet-folder")?.click();
   });
   root.querySelector<HTMLInputElement>("#pet-folder")?.addEventListener("change", async (event) => {
     const input = event.currentTarget as HTMLInputElement;
@@ -1583,6 +1777,9 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   dropzone?.addEventListener("drop", async (event) => {
     event.preventDefault();
     setDragActive(false);
+    if (popupViewState.importMode !== "zip") {
+      return;
+    }
     popupViewState.pendingAction = "import-files";
     renderPopup(root, snapshot);
     const payloadFiles = await Promise.all(
@@ -1606,6 +1803,7 @@ async function mountPopup(root: HTMLElement): Promise<void> {
   popupViewState.locale = await resolveInitialLocale();
   popupViewState.page = "home";
   popupViewState.dragActive = false;
+  popupViewState.importMode = "zip";
   popupViewState.settingsOpen = false;
   popupViewState.currentAnimationSpeed = defaultAnimationSpeed;
   popupViewState.managePageIndex = 0;
