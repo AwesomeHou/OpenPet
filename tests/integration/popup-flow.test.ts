@@ -5,8 +5,8 @@ import { defaultAnimationSpeed, storageKeys } from "@openpet/shared/constants";
 
 const defaultSnapshot = {
   pets: [
-    { id: "boba", displayName: "Boba", boundSites: ["deepseek"], spritesheetDataUrl: "data:image/webp;base64,boba" },
-    { id: "doodlebob", displayName: "Doodle Bob", boundSites: ["gemini"], spritesheetDataUrl: "data:image/webp;base64,doodlebob" },
+    { id: "boba", displayName: "Boba", boundSites: ["deepseek"], spritesheetDataUrl: "data:image/webp;base64,QQ==" },
+    { id: "doodlebob", displayName: "Doodle Bob", boundSites: ["gemini"], spritesheetDataUrl: "data:image/webp;base64,Qg==" },
   ],
   sitePetBindings: { deepseek: "boba", gemini: "doodlebob" },
   sitePetVisibility: { deepseek: true, gemini: true },
@@ -246,6 +246,7 @@ describe("popup flow", () => {
         type: messageTypes.deletePets,
         payload: { petIds: ["pet-1", "pet-10"] },
       });
+      expect(root.querySelector("#manage-toast")?.textContent).toContain("Deleted 2 pets");
     });
   });
 
@@ -271,7 +272,56 @@ describe("popup flow", () => {
         type: messageTypes.deletePets,
         payload: { petIds: ["boba"] },
       });
+      expect(root.querySelector("#manage-toast")?.textContent).toContain("已删除 1 只宠物");
     });
+  });
+
+  test("shows manage-page success toast after single and batch export", async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+    Object.defineProperty(URL, "createObjectURL", {
+      value: vi.fn(() => "blob:pet"),
+      writable: true,
+      configurable: true,
+    });
+    Object.defineProperty(URL, "revokeObjectURL", {
+      value: vi.fn(() => undefined),
+      writable: true,
+      configurable: true,
+    });
+    const anchorClick = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => undefined);
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#manage-pets")?.click();
+
+    const firstCard = root.querySelector('[data-manage-pet-id="boba"]') as HTMLElement;
+    firstCard.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
+    root.querySelector<HTMLButtonElement>('[data-manage-menu="export"]')?.click();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector("#manage-toast")?.textContent).toContain("已导出 Boba");
+    });
+
+    firstCard.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
+    root.querySelector<HTMLButtonElement>('[data-manage-menu="multi-select"]')?.click();
+    const secondCheckbox = root.querySelector('[data-pet-select="doodlebob"]') as HTMLInputElement;
+    secondCheckbox.checked = true;
+    secondCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+    root.querySelector<HTMLButtonElement>("#manage-batch-export")?.click();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector("#manage-toast")?.textContent).toContain("已导出 2 只宠物");
+    });
+
+    expect(URL.createObjectURL).toHaveBeenCalled();
+    expect(URL.revokeObjectURL).toHaveBeenCalled();
+    expect(anchorClick).toHaveBeenCalled();
   });
 
   test("supports batch import through drag and drop with aggregate feedback", async () => {

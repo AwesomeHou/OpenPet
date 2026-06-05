@@ -13,7 +13,13 @@ import type { SiteId } from "@openpet/shared/types";
 
 type PopupLocale = "zh" | "en";
 type PopupSnapshot = {
-  pets: Array<{ id: string; displayName: string; boundSites: SiteId[]; spritesheetDataUrl?: string }>;
+  pets: Array<{
+    id: string;
+    displayName: string;
+    boundSites: SiteId[];
+    spritesheetPath?: string;
+    spritesheetDataUrl?: string;
+  }>;
   sitePetBindings: Partial<Record<SiteId, string>>;
   sitePetVisibility: Partial<Record<SiteId, boolean>>;
   overlayVisible: boolean;
@@ -30,6 +36,7 @@ type PopupViewState = {
   currentAnimationSpeed: number;
   managePageIndex: number;
   manageDeleteMode: boolean;
+  manageToastMessage: string;
   manageContextMenu:
     | {
         petId: string;
@@ -48,9 +55,12 @@ const popupViewState: PopupViewState = {
   currentAnimationSpeed: defaultAnimationSpeed,
   managePageIndex: 0,
   manageDeleteMode: false,
+  manageToastMessage: "",
   manageContextMenu: null,
   selectedPetIds: new Set(),
 };
+
+let manageToastTimer: number | null = null;
 
 const supportedSites: SiteId[] = ["deepseek", "gemini", "chatgpt", "doubao"];
 
@@ -433,6 +443,21 @@ const popupStyles = `
   .manage-context-menu button:hover {
     background: rgba(141, 97, 63, 0.08);
   }
+  .manage-toast {
+    position: absolute;
+    left: 14px;
+    right: 14px;
+    bottom: 14px;
+    z-index: 12;
+    padding: 10px 12px;
+    border-radius: 12px;
+    background: rgba(79, 58, 43, 0.96);
+    color: #fff8ef;
+    font-size: 12px;
+    line-height: 1.45;
+    box-shadow: 0 12px 30px rgba(47, 36, 27, 0.24);
+    pointer-events: none;
+  }
 `;
 
 const localeCopy = {
@@ -464,6 +489,7 @@ const localeCopy = {
     deletedFeedback: "Deleted {count} pets",
     clearPetDataFeedback: "Cleared pet data",
     exportedFeedback: "Exported {pet}",
+    batchExportedFeedback: "Exported {count} pets",
     back: "Back",
     unbound: "Unbound",
     multiSelect: "Multi-select",
@@ -514,6 +540,7 @@ const localeCopy = {
     deletedFeedback: "已删除 {count} 只宠物",
     clearPetDataFeedback: "已清空宠物数据",
     exportedFeedback: "已导出 {pet}",
+    batchExportedFeedback: "已导出 {count} 只宠物",
     back: "返回",
     unbound: "未绑定",
     multiSelect: "多选",
@@ -702,6 +729,36 @@ function renderImportFeedback(): string {
   return `<div class="inline-feedback" id="import-feedback">${escapeHtml(popupViewState.feedbackMessage)}</div>`;
 }
 
+function clearManageToast(): void {
+  popupViewState.manageToastMessage = "";
+  if (manageToastTimer !== null) {
+    window.clearTimeout(manageToastTimer);
+    manageToastTimer = null;
+  }
+}
+
+function renderManageToast(): string {
+  if (!popupViewState.manageToastMessage) {
+    return "";
+  }
+  return `<div id="manage-toast" class="manage-toast" role="status" aria-live="polite">${escapeHtml(
+    popupViewState.manageToastMessage
+  )}</div>`;
+}
+
+function showManageToast(root: HTMLElement, snapshot: PopupSnapshot, message: string): void {
+  clearManageToast();
+  popupViewState.manageToastMessage = message;
+  renderPopup(root, snapshot);
+  manageToastTimer = window.setTimeout(() => {
+    popupViewState.manageToastMessage = "";
+    manageToastTimer = null;
+    if (popupViewState.page === "manage") {
+      renderPopup(root, snapshot);
+    }
+  }, 2200);
+}
+
 function renderStaticPreview(pet: PopupSnapshot["pets"][number], locale: PopupLocale): string {
   if (!pet.spritesheetDataUrl) {
     return `<div class="pet-card-preview-empty">${escapeHtml(localeCopy[locale].importPreviewUnavailable)}</div>`;
@@ -720,11 +777,18 @@ function decodeDataUrl(dataUrl: string): Uint8Array {
   return bytes;
 }
 
+function spritesheetExtensionFromPath(path: string | undefined): "png" | "webp" {
+  return path?.toLowerCase().endsWith(".png") ? "png" : "webp";
+}
+
 async function exportPetPackage(snapshot: PopupSnapshot, petId: string): Promise<string | null> {
   const pet = getPetSnapshot(snapshot, petId);
   if (!pet?.spritesheetDataUrl) {
     return null;
   }
+
+  const spritesheetExtension = spritesheetExtensionFromPath(pet.spritesheetPath);
+  const spritesheetFilename = `spritesheet.${spritesheetExtension}`;
 
   const zip = new JSZip();
   zip.file(
@@ -733,13 +797,13 @@ async function exportPetPackage(snapshot: PopupSnapshot, petId: string): Promise
       {
         id: pet.id,
         displayName: pet.displayName,
-        spritesheetPath: "spritesheet.webp",
+        spritesheetPath: spritesheetFilename,
       },
       null,
       2
     )
   );
-  zip.file("spritesheet.webp", decodeDataUrl(pet.spritesheetDataUrl));
+  zip.file(spritesheetFilename, decodeDataUrl(pet.spritesheetDataUrl));
   const blob = await zip.generateAsync({ type: "blob" });
   const downloadUrl = URL.createObjectURL(blob);
   const anchor = document.createElement("a");
@@ -921,6 +985,7 @@ function renderManagePage(snapshot: PopupSnapshot): string {
           `
           : ""
       }
+      ${renderManageToast()}
     </section>
   `;
 }
@@ -977,11 +1042,13 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       popupViewState.manageDeleteMode = false;
       popupViewState.manageContextMenu = null;
       popupViewState.selectedPetIds.clear();
+      clearManageToast();
       renderPopup(root, snapshot);
     });
     root.querySelector("#manage-close-multi")?.addEventListener("click", () => {
       popupViewState.manageDeleteMode = false;
       popupViewState.selectedPetIds.clear();
+      clearManageToast();
       renderPopup(root, snapshot);
     });
     root.querySelector("#manage-prev-page")?.addEventListener("click", () => {
@@ -1029,10 +1096,11 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
 
       if (action === "export") {
         const exportedName = await exportPetPackage(snapshot, menuPetId);
-        popupViewState.feedbackMessage = exportedName
-          ? translate(locale, "exportedFeedback", { pet: exportedName })
-          : "";
         popupViewState.manageContextMenu = null;
+        if (exportedName) {
+          showManageToast(root, snapshot, translate(locale, "exportedFeedback", { pet: exportedName }));
+          return;
+        }
         renderPopup(root, snapshot);
         return;
       }
@@ -1045,7 +1113,7 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
         popupViewState.manageContextMenu = null;
         const nextSnapshot = await requestSnapshot();
         clampManagePage(nextSnapshot);
-        renderPopup(root, nextSnapshot);
+        showManageToast(root, nextSnapshot, translate(locale, "deletedFeedback", { count: "1" }));
       }
     });
     root.querySelector("#manage-batch-export")?.addEventListener("click", async () => {
@@ -1053,7 +1121,14 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       if (!petIds.length) {
         return;
       }
-      await exportSelectedPets(snapshot, petIds);
+      const exported = await exportSelectedPets(snapshot, petIds);
+      if (exported.length) {
+        showManageToast(
+          root,
+          snapshot,
+          translate(locale, "batchExportedFeedback", { count: String(exported.length) })
+        );
+      }
     });
     root.querySelectorAll<HTMLInputElement>("[data-pet-select]").forEach((checkbox) => {
       checkbox.addEventListener("change", () => {
@@ -1080,7 +1155,7 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       popupViewState.manageContextMenu = null;
       const nextSnapshot = await requestSnapshot();
       clampManagePage(nextSnapshot);
-      renderPopup(root, nextSnapshot);
+      showManageToast(root, nextSnapshot, translate(locale, "deletedFeedback", { count: String(petIds.length) }));
     });
     root.addEventListener("click", (event) => {
       if (!(event.target as HTMLElement | null)?.closest("#manage-context-menu")) {
@@ -1200,6 +1275,7 @@ async function mountPopup(root: HTMLElement): Promise<void> {
   popupViewState.currentAnimationSpeed = defaultAnimationSpeed;
   popupViewState.managePageIndex = 0;
   popupViewState.manageDeleteMode = false;
+  clearManageToast();
   popupViewState.manageContextMenu = null;
   popupViewState.selectedPetIds.clear();
   const snapshot = await requestSnapshot();

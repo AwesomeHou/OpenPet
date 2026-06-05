@@ -2,6 +2,17 @@ import JSZip from "jszip";
 import type { StoredPetRecord } from "@openpet/shared/types";
 import { validatePetMetadata } from "./validatePet";
 
+function mimeTypeFromSpritesheetPath(path: string): string {
+  const normalized = path.toLowerCase();
+  if (normalized.endsWith(".png")) {
+    return "image/png";
+  }
+  if (normalized.endsWith(".webp")) {
+    return "image/webp";
+  }
+  throw new Error(`Unsupported spritesheet format for ${path}`);
+}
+
 function encodeDataUrl(buffer: Uint8Array, mimeType: string): string {
   let binary = "";
   const chunkSize = 32768;
@@ -32,7 +43,7 @@ export async function importPetFromZip(input: ArrayBuffer | Uint8Array): Promise
   const spriteBytes = await spriteEntry.async("uint8array");
   return {
     ...metadata,
-    spritesheetDataUrl: encodeDataUrl(spriteBytes, "image/webp"),
+    spritesheetDataUrl: encodeDataUrl(spriteBytes, mimeTypeFromSpritesheetPath(metadata.spritesheetPath)),
     importedAt: Date.now(),
   };
 }

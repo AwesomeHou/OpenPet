@@ -15,6 +15,9 @@ export function validatePetMetadata(value: unknown): PetMetadata {
   if (typeof candidate.spritesheetPath !== "string" || candidate.spritesheetPath.length === 0) {
     throw new Error("pet.json is missing a valid spritesheetPath");
   }
+  if (!/\.(png|webp)$/i.test(candidate.spritesheetPath)) {
+    throw new Error("pet.json spritesheetPath must end with .png or .webp");
+  }
 
   return {
     id: candidate.id,

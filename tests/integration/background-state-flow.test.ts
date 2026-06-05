@@ -288,6 +288,47 @@ describe("background message flow", () => {
     });
   });
 
+  test("importing pets does not auto-bind any unbound site", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    const tabsApi = {
+      sendMessage,
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 8 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [],
+      sitePetBindings: {},
+      overlayVisible: true,
+    });
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: new Map<number, TabPetState>(),
+    });
+
+    const sendResponse = vi.fn();
+    handler(
+      {
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: [],
+        },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({
+        ok: true,
+        importedPetIds: [],
+        overwrittenPetIds: [],
+        failures: [],
+      });
+      expect(storageRepo.setSitePetBinding).not.toHaveBeenCalled();
+    });
+  });
+
   test("updates site bindings and republishes the full scene", async () => {
     const sendMessage = vi.fn(async () => undefined);
     const tabsApi = {

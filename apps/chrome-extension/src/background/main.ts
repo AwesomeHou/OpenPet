@@ -106,17 +106,6 @@ function createPopupPets(
   }));
 }
 
-async function assignDefaultBindings(storageRepo: OpenPetStorage, petId: string): Promise<void> {
-  const bindings = await storageRepo.getSitePetBindings();
-  if (!bindings.deepseek) {
-    await storageRepo.setSitePetBinding("deepseek", petId);
-    return;
-  }
-  if (!bindings.gemini && petId === "doodlebob") {
-    await storageRepo.setSitePetBinding("gemini", petId);
-  }
-}
-
 export async function publishScene(
   tabId: number,
   options: {
@@ -200,7 +189,6 @@ export function createMessageHandler(
       void importPetFromZip(bytes)
         .then(async (pet) => {
           await storageRepo.savePet(pet);
-          await assignDefaultBindings(storageRepo, pet.id);
           await publishKnownTabs(storageRepo, tabsApi, stateMap);
           sendResponse({ ok: true, petId: pet.id });
         })
@@ -228,7 +216,6 @@ export function createMessageHandler(
               existingPetIds.add(pet.id);
             }
             await storageRepo.savePet(pet);
-            await assignDefaultBindings(storageRepo, pet.id);
           } catch (error) {
             failures.push({
               filename: file.filename,
