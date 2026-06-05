@@ -85,6 +85,7 @@ describe("popup flow", () => {
     await mountPopup(root);
     expect(root.textContent).toContain("Site bindings");
 
+    root.querySelector<HTMLButtonElement>("#settings-toggle")?.click();
     const localeButton = root.querySelector<HTMLButtonElement>('[data-locale="zh"]')!;
     localeButton.click();
 
@@ -234,9 +235,8 @@ describe("popup flow", () => {
     await vi.waitFor(() => {
       expect(root.querySelector("#manage-page-indicator")?.textContent).toContain("2 / 2");
     });
-    const pageTwoCheckbox = root.querySelector('[data-pet-select="pet-10"]') as HTMLInputElement;
-    pageTwoCheckbox.checked = true;
-    pageTwoCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+    (root.querySelector('[data-manage-pet-id="pet-10"]') as HTMLElement).click();
+    expect(root.querySelector('[data-manage-pet-id="pet-10"]')?.getAttribute("data-selected")).toBe("true");
     expect(root.querySelector("#manage-selection-count")?.textContent).toContain("2");
 
     root.querySelector<HTMLButtonElement>("#manage-delete-selected")?.click();
@@ -310,9 +310,8 @@ describe("popup flow", () => {
 
     firstCard.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
     root.querySelector<HTMLButtonElement>('[data-manage-menu="multi-select"]')?.click();
-    const secondCheckbox = root.querySelector('[data-pet-select="doodlebob"]') as HTMLInputElement;
-    secondCheckbox.checked = true;
-    secondCheckbox.dispatchEvent(new Event("change", { bubbles: true }));
+    const secondCard = root.querySelector('[data-manage-pet-id="doodlebob"]') as HTMLElement;
+    secondCard.click();
     root.querySelector<HTMLButtonElement>("#manage-batch-export")?.click();
 
     await vi.waitFor(() => {
@@ -358,6 +357,7 @@ describe("popup flow", () => {
     });
 
     dropzone.dispatchEvent(dragEvent);
+    expect(root.querySelector("#pet-dropzone")?.textContent).toContain("Importing pets");
 
     await vi.waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith({
@@ -373,6 +373,103 @@ describe("popup flow", () => {
       expect(root.querySelector("#import-feedback")?.textContent).toContain("Imported 1");
       expect(root.querySelector("#import-feedback")?.textContent).toContain("Overwritten 1");
       expect(root.querySelector("#import-feedback")?.textContent).toContain("Failed 1");
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("Error code");
+    });
+  });
+
+  test("supports folder import by treating each direct child directory as one pet package", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { files?: Array<{ filename: string }> } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      if (message.type === messageTypes.batchImportPets) {
+        return {
+          ok: true,
+          importedPetIds: ["deepseek", "doodlebob"],
+          overwrittenPetIds: [],
+          failures: [],
+        };
+      }
+
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const folderInput = root.querySelector("#pet-folder") as HTMLInputElement;
+    const petJsonOne = new File(['{"id":"deepseek","displayName":"DeepSeek","spritesheetPath":"spritesheet.webp"}'], "pet.json", { type: "application/json" });
+    Object.defineProperty(petJsonOne, "webkitRelativePath", {
+      value: "pets/deepseek/pet.json",
+      configurable: true,
+    });
+    const spriteOne = new File(["A"], "spritesheet.webp", { type: "image/webp" });
+    Object.defineProperty(spriteOne, "webkitRelativePath", {
+      value: "pets/deepseek/spritesheet.webp",
+      configurable: true,
+    });
+    const petJsonTwo = new File(['{"id":"doodlebob","displayName":"Doodle Bob","spritesheetPath":"spritesheet.webp"}'], "pet.json", { type: "application/json" });
+    Object.defineProperty(petJsonTwo, "webkitRelativePath", {
+      value: "pets/doodlebob/pet.json",
+      configurable: true,
+    });
+    const spriteTwo = new File(["B"], "spritesheet.webp", { type: "image/webp" });
+    Object.defineProperty(spriteTwo, "webkitRelativePath", {
+      value: "pets/doodlebob/spritesheet.webp",
+      configurable: true,
+    });
+    Object.defineProperty(folderInput, "files", {
+      value: [petJsonOne, spriteOne, petJsonTwo, spriteTwo],
+      configurable: true,
+    });
+
+    folderInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: expect.arrayContaining([
+            expect.objectContaining({ filename: "deepseek.zip" }),
+            expect.objectContaining({ filename: "doodlebob.zip" }),
+          ]),
+        },
+      });
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("成功导入 2");
+    });
+  });
+
+  test("shows a coded failure when folder import structure is invalid", async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const folderInput = root.querySelector("#pet-folder") as HTMLInputElement;
+    const invalidFile = new File(["ignored"], "README.txt", { type: "text/plain" });
+    Object.defineProperty(invalidFile, "webkitRelativePath", {
+      value: "pets/README.txt",
+      configurable: true,
+    });
+    Object.defineProperty(folderInput, "files", {
+      value: [invalidFile],
+      configurable: true,
+    });
+
+    folderInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(sendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: messageTypes.batchImportPets })
+      );
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("E_FOLDER_INVALID_STRUCTURE");
     });
   });
 
@@ -397,6 +494,8 @@ describe("popup flow", () => {
     const root = document.getElementById("app")!;
     await mountPopup(root);
 
+    expect(root.querySelector("#animation-speed-range")).toBeNull();
+    root.querySelector<HTMLButtonElement>("#settings-toggle")?.click();
     const range = root.querySelector("#animation-speed-range") as HTMLInputElement;
     expect(range.value).toBe("1.15");
     expect(root.querySelector("#animation-speed-number")).toBeNull();
@@ -456,6 +555,7 @@ describe("popup flow", () => {
 
     const root = document.getElementById("app")!;
     await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#settings-toggle")?.click();
 
     root.querySelector<HTMLButtonElement>("#animation-speed-increase")?.click();
     await vi.waitFor(() => {
@@ -488,5 +588,18 @@ describe("popup flow", () => {
         payload: { speed: 1 },
       });
     });
+  });
+
+  test("renders settings panel with github issues feedback link", async () => {
+    installChromeMock({ locale: "en-US" });
+    const root = document.getElementById("app")!;
+
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#settings-toggle")?.click();
+
+    const issuesLink = root.querySelector<HTMLAnchorElement>("#github-issues-link");
+    expect(issuesLink?.href).toBe("https://github.com/AwesomeHou/OpenPet/issues");
+    expect(root.textContent).toContain("Feedback");
+    expect(root.textContent).toContain("GitHub Issues");
   });
 });

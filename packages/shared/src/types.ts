@@ -45,6 +45,22 @@ export interface PetMetadata {
   spritesheetPath: string;
 }
 
+export const petImportErrorCodes = [
+  "E_STORAGE_QUOTA_EXCEEDED",
+  "E_PACKAGE_READ_FAILED",
+  "E_PET_JSON_MISSING",
+  "E_PET_JSON_INVALID",
+  "E_PET_JSON_NOT_OBJECT",
+  "E_PET_ID_INVALID",
+  "E_PET_DISPLAY_NAME_INVALID",
+  "E_PET_SPRITESHEET_PATH_INVALID",
+  "E_PET_SPRITESHEET_PATH_UNSUPPORTED",
+  "E_SPRITESHEET_MISSING",
+  "E_FOLDER_INVALID_STRUCTURE",
+] as const;
+
+export type PetImportErrorCode = (typeof petImportErrorCodes)[number];
+
 export interface StoredPetRecord {
   id: string;
   displayName: string;

@@ -13,6 +13,7 @@ import { messageTypes } from "@openpet/shared/messages";
 import type {
   OverlayPlacement,
   OverlaySceneState,
+  PetImportErrorCode,
   ScenePetState,
   SiteId,
   StoredPetRecord,
@@ -20,6 +21,7 @@ import type {
 } from "@openpet/shared/types";
 import { createTabState } from "@openpet/state/sessionState";
 import { importPetFromZip } from "@openpet/pet-assets/importPet";
+import { normalizePetImportError } from "@openpet/pet-assets/errors";
 import { defaultAnimationSpeed, defaultPetSize, maxAnimationSpeed, minAnimationSpeed } from "@openpet/shared/constants";
 import { OpenPetStorage } from "./storage";
 
@@ -204,22 +206,24 @@ export function createMessageHandler(
         const existingPetIds = new Set((await storageRepo.getPets()).map((pet) => pet.id));
         const importedPetIds: string[] = [];
         const overwrittenPetIds: string[] = [];
-        const failures: Array<{ filename: string; error: string }> = [];
+        const failures: Array<{ filename: string; code: PetImportErrorCode; error: string }> = [];
 
         for (const file of batchMessage.payload.files) {
           try {
             const pet = await importPetFromZip(Uint8Array.from(file.bytes));
+            await storageRepo.savePet(pet);
             if (existingPetIds.has(pet.id)) {
               overwrittenPetIds.push(pet.id);
             } else {
               importedPetIds.push(pet.id);
               existingPetIds.add(pet.id);
             }
-            await storageRepo.savePet(pet);
           } catch (error) {
+            const normalizedError = normalizePetImportError(error);
             failures.push({
               filename: file.filename,
-              error: error instanceof Error ? error.message : "Unknown import failure",
+              code: normalizedError.code,
+              error: normalizedError.message,
             });
           }
         }

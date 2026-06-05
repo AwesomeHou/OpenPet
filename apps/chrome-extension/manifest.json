@@ -3,7 +3,7 @@
   "name": "OpenPet",
   "version": "0.1.0",
   "description": "A local-first pet status system for AI chat workflows.",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "unlimitedStorage", "tabs"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://*/*", "http://*/*"],
   "icons": {
     "16": "assets/icons/openpet-16.png",

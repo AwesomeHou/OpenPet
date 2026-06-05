@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import { createMessageHandler } from "../../apps/chrome-extension/src/background/main";
 import { messageTypes } from "@openpet/shared/messages";
 import type { StoredPetRecord, TabPetState } from "@openpet/shared/types";
+import JSZip from "jszip";
 
 function createPet(id: string, displayName: string): StoredPetRecord {
   return {
@@ -326,6 +327,107 @@ describe("background message flow", () => {
         failures: [],
       });
       expect(storageRepo.setSitePetBinding).not.toHaveBeenCalled();
+    });
+  });
+
+  test("returns coded failures when a pet package cannot be read", async () => {
+    const tabsApi = {
+      sendMessage: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => []),
+    };
+    const storageRepo = createStorageStub({
+      pets: [],
+      sitePetBindings: {},
+      overlayVisible: true,
+    });
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: new Map<number, TabPetState>(),
+    });
+    const sendResponse = vi.fn();
+
+    handler(
+      {
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: [{ filename: "broken.zip", bytes: [1, 2, 3, 4] }],
+        },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({
+        ok: true,
+        importedPetIds: [],
+        overwrittenPetIds: [],
+        failures: [
+          expect.objectContaining({
+            filename: "broken.zip",
+            code: "E_PACKAGE_READ_FAILED",
+          }),
+        ],
+      });
+    });
+  });
+
+  test("does not count pets as imported when storage save fails", async () => {
+    const tabsApi = {
+      sendMessage: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => []),
+    };
+    const storageRepo = createStorageStub({
+      pets: [],
+      sitePetBindings: {},
+      overlayVisible: true,
+    });
+    storageRepo.savePet.mockRejectedValueOnce(new Error("Resource::kQuotaBytes quota exceeded"));
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: new Map<number, TabPetState>(),
+    });
+    const sendResponse = vi.fn();
+
+    const zip = new JSZip();
+    zip.file(
+      "pet.json",
+      JSON.stringify({
+        id: "boba",
+        displayName: "Boba",
+        spritesheetPath: "spritesheet.webp",
+      })
+    );
+    zip.file("spritesheet.webp", new Uint8Array([65]));
+    const validZip = Array.from(await zip.generateAsync({ type: "uint8array" }));
+
+    handler(
+      {
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: [{ filename: "boba.zip", bytes: validZip }],
+        },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({
+        ok: true,
+        importedPetIds: [],
+        overwrittenPetIds: [],
+        failures: [
+          expect.objectContaining({
+            filename: "boba.zip",
+            code: "E_STORAGE_QUOTA_EXCEEDED",
+          }),
+        ],
+      });
     });
   });
 

@@ -9,7 +9,7 @@ import {
 } from "@openpet/shared/constants";
 import JSZip from "jszip";
 import { messageTypes, type OpenPetMessage } from "@openpet/shared/messages";
-import type { SiteId } from "@openpet/shared/types";
+import type { PetImportErrorCode, SiteId } from "@openpet/shared/types";
 
 type PopupLocale = "zh" | "en";
 type PopupSnapshot = {
@@ -33,10 +33,19 @@ type PopupViewState = {
   feedbackMessage: string;
   dragActive: boolean;
   page: PopupPage;
+  settingsOpen: boolean;
   currentAnimationSpeed: number;
   managePageIndex: number;
   manageDeleteMode: boolean;
   manageToastMessage: string;
+  pendingAction:
+    | null
+    | "import-files"
+    | "import-folder"
+    | "manage-export-single"
+    | "manage-delete-single"
+    | "manage-export-batch"
+    | "manage-delete-batch";
   manageContextMenu:
     | {
         petId: string;
@@ -52,15 +61,23 @@ const popupViewState: PopupViewState = {
   feedbackMessage: "",
   dragActive: false,
   page: "home",
+  settingsOpen: false,
   currentAnimationSpeed: defaultAnimationSpeed,
   managePageIndex: 0,
   manageDeleteMode: false,
   manageToastMessage: "",
+  pendingAction: null,
   manageContextMenu: null,
   selectedPetIds: new Set(),
 };
 
 let manageToastTimer: number | null = null;
+
+type ImportFailureItem = {
+  filename: string;
+  code: PetImportErrorCode;
+  error: string;
+};
 
 const supportedSites: SiteId[] = ["deepseek", "gemini", "chatgpt", "doubao"];
 
@@ -116,14 +133,7 @@ const popupStyles = `
     font-size: 18px;
     font-weight: 700;
   }
-  .locale-toggle {
-    display: inline-flex;
-    gap: 4px;
-    padding: 4px;
-    border-radius: 999px;
-    background: rgba(82, 57, 36, 0.08);
-  }
-  .locale-toggle button,
+  .header-icon-button,
   .secondary-button,
   .primary-button,
   .icon-button,
@@ -133,16 +143,17 @@ const popupStyles = `
     font: inherit;
     cursor: pointer;
   }
-  .locale-toggle button {
+  .header-icon-button {
+    width: 40px;
+    height: 40px;
+    padding: 0;
     border-radius: 999px;
-    padding: 6px 10px;
-    font-size: 12px;
-    background: transparent;
-    color: #6b5441;
-  }
-  .locale-toggle button[data-active="true"] {
-    background: #ffffff;
-    color: #2f241b;
+    border: 1px solid rgba(109, 78, 53, 0.12);
+    background: rgba(255, 253, 249, 0.96);
+    color: #6a4f39;
+    display: grid;
+    place-items: center;
+    box-shadow: 0 8px 18px rgba(84, 60, 41, 0.08);
   }
   .popup-card {
     border-radius: 16px;
@@ -222,6 +233,24 @@ const popupStyles = `
   .upload-primary {
     font-weight: 600;
   }
+  .busy-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 999px;
+    border: 2px solid rgba(141, 97, 63, 0.18);
+    border-top-color: #8d613f;
+    animation: openpet-spin 0.9s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes openpet-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
   .upload-secondary,
   .helper-text,
   .pet-card-site {
@@ -236,6 +265,7 @@ const popupStyles = `
     color: #6a4f39;
     background: rgba(255, 248, 239, 0.92);
     border: 1px solid rgba(141, 97, 63, 0.16);
+    white-space: pre-wrap;
   }
   .speed-inline {
     display: grid;
@@ -281,6 +311,58 @@ const popupStyles = `
     margin: 0;
     accent-color: #8d613f;
   }
+  .settings-panel {
+    position: absolute;
+    top: 66px;
+    right: 18px;
+    z-index: 14;
+    width: 244px;
+    border-radius: 18px;
+    padding: 14px;
+    display: grid;
+    gap: 12px;
+    background: rgba(255, 253, 249, 0.98);
+    border: 1px solid rgba(109, 78, 53, 0.14);
+    box-shadow: 0 16px 32px rgba(84, 60, 41, 0.16);
+  }
+  .settings-section {
+    display: grid;
+    gap: 8px;
+  }
+  .settings-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #6a4f39;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .settings-locale-toggle {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 999px;
+    background: rgba(82, 57, 36, 0.08);
+  }
+  .settings-locale-toggle button {
+    border: 0;
+    border-radius: 999px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 12px;
+    background: transparent;
+    color: #6b5441;
+    cursor: pointer;
+  }
+  .settings-locale-toggle button[data-active="true"] {
+    background: #ffffff;
+    color: #2f241b;
+  }
+  .settings-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+  }
   .pet-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -294,6 +376,12 @@ const popupStyles = `
     align-content: start;
     min-height: 0;
     overflow: hidden;
+    transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+  }
+  .pet-card[data-selected="true"] {
+    border-color: rgba(141, 97, 63, 0.72);
+    box-shadow: 0 0 0 2px rgba(141, 97, 63, 0.16), 0 12px 22px rgba(84, 60, 41, 0.1);
+    transform: translateY(-1px);
   }
   .pet-card-preview {
     display: grid;
@@ -443,6 +531,10 @@ const popupStyles = `
   .manage-context-menu button:hover {
     background: rgba(141, 97, 63, 0.08);
   }
+  .manage-context-menu button:disabled {
+    cursor: wait;
+    opacity: 0.68;
+  }
   .manage-toast {
     position: absolute;
     left: 14px;
@@ -467,11 +559,16 @@ const localeCopy = {
     dataTitle: "Pet data",
     managePetsTitle: "Manage Pets",
     animationTitle: "Animation speed",
+    settingsTitle: "Settings",
+    languageTitle: "Language",
+    feedbackTitle: "Feedback",
+    githubIssues: "GitHub Issues",
     overlayVisible: "Overlay visible",
     petStore: "Pet Store",
     companionNote: "For a persistent desktop experience, a companion app will be available later.",
     importZip: "Import pet zip",
-    importDropHint: "Click or drop .zip files here",
+    importFolder: "Import pet folder",
+    importDropHint: "Click to choose .zip files or import pet folders, or drop .zip files here",
     importPreviewUnavailable: "Preview unavailable",
     clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
@@ -482,7 +579,9 @@ const localeCopy = {
     noPet: "None",
     noImportedPets: "No imported pets",
     importedSummary: "Imported {imported} · Overwritten {overwritten} · Failed {failed}",
+    importFailureCodePrefix: "Error code",
     importedFailure: "Import failed: {error}",
+    importPending: "Importing pets...",
     boundFeedback: "Bound {site} to {pet}",
     unboundFeedback: "Cleared {site} binding",
     visibilityFeedback: "{site} display {state}",
@@ -490,6 +589,8 @@ const localeCopy = {
     clearPetDataFeedback: "Cleared pet data",
     exportedFeedback: "Exported {pet}",
     batchExportedFeedback: "Exported {count} pets",
+    exportPending: "Exporting...",
+    deletePending: "Deleting...",
     back: "Back",
     unbound: "Unbound",
     multiSelect: "Multi-select",
@@ -518,11 +619,16 @@ const localeCopy = {
     dataTitle: "宠物数据",
     managePetsTitle: "管理宠物",
     animationTitle: "动画速度",
+    settingsTitle: "设置",
+    languageTitle: "语言",
+    feedbackTitle: "反馈通道",
+    githubIssues: "GitHub Issues",
     overlayVisible: "显示宠物浮层",
     petStore: "宠物商店",
     companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
     importZip: "导入宠物 zip",
-    importDropHint: "点击选择或将多个 .zip 文件拖到这里",
+    importFolder: "导入宠物文件夹",
+    importDropHint: "点击选择 .zip 文件或导入宠物文件夹，也可拖入多个 .zip 文件",
     importPreviewUnavailable: "暂无预览",
     clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
@@ -533,7 +639,9 @@ const localeCopy = {
     noPet: "无",
     noImportedPets: "暂无已导入宠物",
     importedSummary: "成功导入 {imported} · 已覆盖 {overwritten} · 失败 {failed}",
+    importFailureCodePrefix: "错误码",
     importedFailure: "导入失败：{error}",
+    importPending: "正在导入宠物...",
     boundFeedback: "已将 {site} 绑定到 {pet}",
     unboundFeedback: "已清除 {site} 绑定",
     visibilityFeedback: "{site} 显示已{state}",
@@ -541,6 +649,8 @@ const localeCopy = {
     clearPetDataFeedback: "已清空宠物数据",
     exportedFeedback: "已导出 {pet}",
     batchExportedFeedback: "已导出 {count} 只宠物",
+    exportPending: "正在导出...",
+    deletePending: "正在删除...",
     back: "返回",
     unbound: "未绑定",
     multiSelect: "多选",
@@ -659,28 +769,129 @@ async function requestSnapshot(): Promise<PopupSnapshot> {
   return chrome.runtime.sendMessage({ type: messageTypes.popupSnapshot } as OpenPetMessage);
 }
 
-async function batchImportFiles(root: HTMLElement, snapshot: PopupSnapshot, files: File[]): Promise<void> {
-  if (!files.length) {
+async function encodeImportFile(file: File): Promise<{ filename: string; bytes: number[] }> {
+  const buffer =
+    typeof file.arrayBuffer === "function" ? await file.arrayBuffer() : await new Response(file).arrayBuffer();
+  return {
+    filename: file.name,
+    bytes: Array.from(new Uint8Array(buffer)),
+  };
+}
+
+async function createFolderImportPayload(
+  files: File[]
+): Promise<{
+  payloadFiles: Array<{ filename: string; bytes: number[] }>;
+  preflightFailures: ImportFailureItem[];
+}> {
+  const groups = new Map<string, Array<{ path: string; file: File }>>();
+
+  for (const file of files) {
+    const relativePath = file.webkitRelativePath || file.name;
+    const segments = relativePath.split(/[\\/]/).filter(Boolean);
+    if (segments.length < 3) {
+      continue;
+    }
+
+    const folderName = segments[1];
+    const petRelativePath = segments.slice(2).join("/");
+    const group = groups.get(folderName) ?? [];
+    group.push({ path: petRelativePath, file });
+    groups.set(folderName, group);
+  }
+
+  if (!groups.size) {
+    return {
+      payloadFiles: [],
+      preflightFailures: [
+        {
+          filename: files[0]?.webkitRelativePath?.split(/[\\/]/).filter(Boolean)[0] ?? "folder",
+          code: "E_FOLDER_INVALID_STRUCTURE",
+          error:
+            "Selected folder must contain complete pet folders as direct children, each including pet.json and a spritesheet file.",
+        },
+      ],
+    };
+  }
+
+  const payloadFiles = await Promise.all(
+    [...groups.entries()].map(async ([folderName, folderFiles]) => {
+      const zip = new JSZip();
+      for (const entry of folderFiles) {
+        const buffer =
+          typeof entry.file.arrayBuffer === "function"
+            ? await entry.file.arrayBuffer()
+            : await new Response(entry.file).arrayBuffer();
+        zip.file(entry.path, buffer);
+      }
+      const bytes = await zip.generateAsync({ type: "uint8array" });
+      return {
+        filename: `${folderName}.zip`,
+        bytes: Array.from(bytes),
+      };
+    })
+  );
+
+  return {
+    payloadFiles,
+    preflightFailures: [],
+  };
+}
+
+function buildImportFeedbackMessage(
+  locale: PopupLocale,
+  summary: {
+    imported: number;
+    overwritten: number;
+    failed: number;
+  },
+  failures: ImportFailureItem[]
+): string {
+  const lines = [
+    translate(locale, "importedSummary", {
+      imported: String(summary.imported),
+      overwritten: String(summary.overwritten),
+      failed: String(summary.failed),
+    }),
+  ];
+
+  for (const failure of failures) {
+    lines.push(
+      `${failure.filename} · ${translate(locale, "importFailureCodePrefix")}: ${failure.code} · ${failure.error}`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+async function batchImportPayloadFiles(
+  root: HTMLElement,
+  snapshot: PopupSnapshot,
+  payloadFiles: Array<{ filename: string; bytes: number[] }>,
+  preflightFailures: ImportFailureItem[] = []
+): Promise<void> {
+  if (!payloadFiles.length && !preflightFailures.length) {
     return;
   }
-  try {
-    const payloadFiles = await Promise.all(
-      files.map(async (file) => {
-        const buffer =
-          typeof file.arrayBuffer === "function"
-            ? await file.arrayBuffer()
-            : await new Response(file).arrayBuffer();
-        return {
-          filename: file.name,
-          bytes: Array.from(new Uint8Array(buffer)),
-        };
-      })
+
+  if (!payloadFiles.length) {
+    popupViewState.pendingAction = null;
+    popupViewState.feedbackMessage = buildImportFeedbackMessage(
+      popupViewState.locale,
+      { imported: 0, overwritten: 0, failed: preflightFailures.length },
+      preflightFailures
     );
+    renderPopup(root, snapshot);
+    return;
+  }
+
+  try {
     const result = await chrome.runtime.sendMessage({
       type: messageTypes.batchImportPets,
       payload: { files: payloadFiles },
     });
     if (!result?.ok) {
+      popupViewState.pendingAction = null;
       popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFailure", {
         error: result?.error ?? "Unknown failure",
       });
@@ -689,13 +900,20 @@ async function batchImportFiles(root: HTMLElement, snapshot: PopupSnapshot, file
     }
 
     const nextSnapshot = await requestSnapshot();
-    popupViewState.feedbackMessage = translate(popupViewState.locale, "importedSummary", {
-      imported: String(result.importedPetIds?.length ?? 0),
-      overwritten: String(result.overwrittenPetIds?.length ?? 0),
-      failed: String(result.failures?.length ?? 0),
-    });
+    const failures = [...preflightFailures, ...((result.failures as ImportFailureItem[] | undefined) ?? [])];
+    popupViewState.pendingAction = null;
+    popupViewState.feedbackMessage = buildImportFeedbackMessage(
+      popupViewState.locale,
+      {
+        imported: result.importedPetIds?.length ?? 0,
+        overwritten: result.overwrittenPetIds?.length ?? 0,
+        failed: failures.length,
+      },
+      failures
+    );
     renderPopup(root, nextSnapshot);
   } catch {
+    popupViewState.pendingAction = null;
     popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFailure", {
       error: "Unexpected failure",
     });
@@ -727,6 +945,16 @@ function renderImportFeedback(): string {
     return "";
   }
   return `<div class="inline-feedback" id="import-feedback">${escapeHtml(popupViewState.feedbackMessage)}</div>`;
+}
+
+function renderBusyLabel(label: string): string {
+  return `<span class="busy-indicator"><span class="spinner" aria-hidden="true"></span><span>${escapeHtml(
+    label
+  )}</span></span>`;
+}
+
+function isPendingAction(action: NonNullable<PopupViewState["pendingAction"]>): boolean {
+  return popupViewState.pendingAction === action;
 }
 
 function clearManageToast(): void {
@@ -831,7 +1059,6 @@ function renderHomePage(snapshot: PopupSnapshot): string {
   const locale = popupViewState.locale;
   const copy = localeCopy[locale];
   const petOptions = createPetOptions(snapshot, locale);
-  const animationSpeed = clampAnimationSpeed(popupViewState.currentAnimationSpeed);
   return `
     <section class="popup-card">
       <div class="card-title">${copy.homeTitle}</div>
@@ -865,40 +1092,23 @@ function renderHomePage(snapshot: PopupSnapshot): string {
         <div class="field-label">
           <span>${copy.importZip}</span>
           <input id="pet-file" class="upload-input" type="file" accept=".zip" multiple />
-          <label id="pet-dropzone" class="upload-dropzone" data-drag-active="${popupViewState.dragActive}" for="pet-file">
-            <span class="upload-primary">${copy.importZip}</span>
+          <input id="pet-folder" class="upload-input" type="file" webkitdirectory directory multiple />
+          <label id="pet-dropzone" class="upload-dropzone" data-drag-active="${popupViewState.dragActive}" for="pet-file" aria-busy="${
+            isPendingAction("import-files") ? "true" : "false"
+          }">
+            <span class="upload-primary">${
+              isPendingAction("import-files") ? renderBusyLabel(copy.importPending) : copy.importZip
+            }</span>
             <span class="upload-secondary">${copy.importDropHint}</span>
           </label>
+          <button id="pet-folder-button" class="secondary-button" type="button" ${
+            isPendingAction("import-folder") ? "disabled" : ""
+          }>${
+            isPendingAction("import-folder") ? renderBusyLabel(copy.importPending) : copy.importFolder
+          }</button>
           ${renderImportFeedback()}
         </div>
         <button id="manage-pets" class="secondary-button" type="button">${copy.managePetsTitle}</button>
-      </div>
-    </section>
-
-    <section class="popup-card">
-      <div class="card-title">${copy.animationTitle}</div>
-      <div class="speed-controls">
-        <div class="field-label speed-inline">
-          <div class="speed-topline">
-            <span>${copy.animationTitle}</span>
-            <div class="speed-value-group">
-              <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
-              <div class="speed-nudge-group" aria-label="${copy.animationTitle}">
-                <button id="animation-speed-decrease" class="speed-nudge-button" type="button" aria-label="Decrease speed">−</button>
-                <button id="animation-speed-increase" class="speed-nudge-button" type="button" aria-label="Increase speed">+</button>
-              </div>
-            </div>
-          </div>
-          <input
-            id="animation-speed-range"
-            class="speed-range"
-            type="range"
-            min="${minAnimationSpeed}"
-            max="${maxAnimationSpeed}"
-            step="${animationSpeedSliderStep}"
-            value="${animationSpeed}"
-          />
-        </div>
       </div>
     </section>
 
@@ -935,15 +1145,12 @@ function renderManagePage(snapshot: PopupSnapshot): string {
               ? pet.boundSites.map((siteId) => localizeSite(locale, siteId)).join(" / ")
               : copy.unbound;
             return `
-              <div class="pet-card" data-pet-card="true" data-manage-pet-id="${escapeHtml(pet.id)}">
-                ${showDeleteMode ? `
-                  <div class="toggle-row">
-                    <span></span>
-                    <input class="pet-card-check" data-pet-select="${escapeHtml(pet.id)}" type="checkbox" ${
-                    popupViewState.selectedPetIds.has(pet.id) ? "checked" : ""
-                  } />
-                  </div>
-                ` : ""}
+              <div
+                class="pet-card"
+                data-pet-card="true"
+                data-manage-pet-id="${escapeHtml(pet.id)}"
+                data-selected="${showDeleteMode && popupViewState.selectedPetIds.has(pet.id) ? "true" : "false"}"
+              >
                 <div class="pet-card-preview">
                   ${renderStaticPreview(pet, locale)}
                 </div>
@@ -976,17 +1183,81 @@ function renderManagePage(snapshot: PopupSnapshot): string {
             <div class="manage-batch-actions">
               <button id="manage-close-multi" class="secondary-button manage-close-button" type="button" aria-label="${copy.close}">×</button>
               <button id="manage-batch-export" class="secondary-button" type="button" ${
-                popupViewState.selectedPetIds.size ? "" : "disabled"
-              }>${copy.batchExport}</button>
+                popupViewState.selectedPetIds.size && !isPendingAction("manage-export-batch") ? "" : "disabled"
+              }>${
+                isPendingAction("manage-export-batch")
+                  ? renderBusyLabel(copy.exportPending)
+                  : copy.batchExport
+              }</button>
               <button id="manage-delete-selected" class="primary-button" type="button" ${
-                popupViewState.selectedPetIds.size ? "" : "disabled"
-              }>${copy.batchDelete}</button>
+                popupViewState.selectedPetIds.size && !isPendingAction("manage-delete-batch") ? "" : "disabled"
+              }>${
+                isPendingAction("manage-delete-batch")
+                  ? renderBusyLabel(copy.deletePending)
+                  : copy.batchDelete
+              }</button>
             </div>
           `
           : ""
       }
       ${renderManageToast()}
     </section>
+  `;
+}
+
+function renderSettingsPanel(): string {
+  if (!popupViewState.settingsOpen) {
+    return "";
+  }
+
+  const locale = popupViewState.locale;
+  const copy = localeCopy[locale];
+  const animationSpeed = clampAnimationSpeed(popupViewState.currentAnimationSpeed);
+
+  return `
+    <div id="settings-panel" class="settings-panel">
+      <div class="settings-section">
+        <div class="settings-section-title">${copy.languageTitle}</div>
+        <div class="settings-locale-toggle" aria-label="${copy.languageTitle}">
+          <button id="locale-en" type="button" data-locale="en" data-active="${locale === "en"}">EN</button>
+          <button id="locale-zh" type="button" data-locale="zh" data-active="${locale === "zh"}">中</button>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">${copy.animationTitle}</div>
+        <div class="field-label speed-inline">
+          <div class="speed-topline">
+            <span>${copy.animationTitle}</span>
+            <div class="speed-value-group">
+              <span id="animation-speed-value" class="speed-value">${formatAnimationSpeed(animationSpeed)}</span>
+              <div class="speed-nudge-group" aria-label="${copy.animationTitle}">
+                <button id="animation-speed-decrease" class="speed-nudge-button" type="button" aria-label="Decrease speed">−</button>
+                <button id="animation-speed-increase" class="speed-nudge-button" type="button" aria-label="Increase speed">+</button>
+              </div>
+            </div>
+          </div>
+          <input
+            id="animation-speed-range"
+            class="speed-range"
+            type="range"
+            min="${minAnimationSpeed}"
+            max="${maxAnimationSpeed}"
+            step="${animationSpeedSliderStep}"
+            value="${animationSpeed}"
+          />
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">${copy.feedbackTitle}</div>
+        <a
+          id="github-issues-link"
+          class="secondary-button settings-link"
+          href="https://github.com/AwesomeHou/OpenPet/issues"
+          target="_blank"
+          rel="noreferrer"
+        >${copy.githubIssues}</a>
+      </div>
+    </div>
   `;
 }
 
@@ -1002,9 +1273,19 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
         class="manage-context-menu"
         style="left:${popupViewState.manageContextMenu.x}px; top:${popupViewState.manageContextMenu.y}px;"
       >
-        <button type="button" data-manage-menu="multi-select">${copy.multiSelect}</button>
-        <button type="button" data-manage-menu="export">${copy.exportPet}</button>
-        <button type="button" data-manage-menu="delete">${copy.deletePet}</button>
+        <button type="button" data-manage-menu="multi-select" ${
+          popupViewState.pendingAction ? "disabled" : ""
+        }>${copy.multiSelect}</button>
+        <button type="button" data-manage-menu="export" ${
+          popupViewState.pendingAction ? "disabled" : ""
+        }>${
+          isPendingAction("manage-export-single") ? renderBusyLabel(copy.exportPending) : copy.exportPet
+        }</button>
+        <button type="button" data-manage-menu="delete" ${
+          popupViewState.pendingAction ? "disabled" : ""
+        }>${
+          isPendingAction("manage-delete-single") ? renderBusyLabel(copy.deletePending) : copy.deletePet
+        }</button>
       </div>
     `
     : "";
@@ -1014,12 +1295,10 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     <div class="popup-shell">
       <div class="popup-header">
         <div class="popup-title">${copy.title}</div>
-        <div class="locale-toggle" aria-label="Language switcher">
-          <button id="locale-en" type="button" data-locale="en" data-active="${locale === "en"}">EN</button>
-          <button id="locale-zh" type="button" data-locale="zh" data-active="${locale === "zh"}">中</button>
-        </div>
+        <button id="settings-toggle" class="header-icon-button" type="button" aria-label="${copy.settingsTitle}">⚙</button>
       </div>
       ${body}
+      ${renderSettingsPanel()}
       ${contextMenu}
     </div>
   `;
@@ -1034,6 +1313,11 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       await persistLocale(nextLocale);
       renderPopup(root, snapshot);
     });
+  });
+  root.querySelector("#settings-toggle")?.addEventListener("click", (event) => {
+    event.stopPropagation();
+    popupViewState.settingsOpen = !popupViewState.settingsOpen;
+    renderPopup(root, snapshot);
   });
 
   if (popupViewState.page === "manage") {
@@ -1063,8 +1347,26 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       renderPopup(root, snapshot);
     });
     root.querySelectorAll<HTMLElement>("[data-manage-pet-id]").forEach((card) => {
+      card.addEventListener("click", () => {
+        if (!popupViewState.manageDeleteMode) {
+          return;
+        }
+        const petId = card.dataset.managePetId;
+        if (!petId) {
+          return;
+        }
+        if (popupViewState.selectedPetIds.has(petId)) {
+          popupViewState.selectedPetIds.delete(petId);
+        } else {
+          popupViewState.selectedPetIds.add(petId);
+        }
+        renderPopup(root, snapshot);
+      });
       card.addEventListener("contextmenu", (event) => {
         event.preventDefault();
+        if (popupViewState.pendingAction) {
+          return;
+        }
         const petId = card.dataset.managePetId;
         if (!petId) {
           return;
@@ -1095,7 +1397,10 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       }
 
       if (action === "export") {
+        popupViewState.pendingAction = "manage-export-single";
+        renderPopup(root, snapshot);
         const exportedName = await exportPetPackage(snapshot, menuPetId);
+        popupViewState.pendingAction = null;
         popupViewState.manageContextMenu = null;
         if (exportedName) {
           showManageToast(root, snapshot, translate(locale, "exportedFeedback", { pet: exportedName }));
@@ -1106,10 +1411,13 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       }
 
       if (action === "delete") {
+        popupViewState.pendingAction = "manage-delete-single";
+        renderPopup(root, snapshot);
         await chrome.runtime.sendMessage({
           type: messageTypes.deletePets,
           payload: { petIds: [menuPetId] },
         });
+        popupViewState.pendingAction = null;
         popupViewState.manageContextMenu = null;
         const nextSnapshot = await requestSnapshot();
         clampManagePage(nextSnapshot);
@@ -1121,7 +1429,10 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       if (!petIds.length) {
         return;
       }
+      popupViewState.pendingAction = "manage-export-batch";
+      renderPopup(root, snapshot);
       const exported = await exportSelectedPets(snapshot, petIds);
+      popupViewState.pendingAction = null;
       if (exported.length) {
         showManageToast(
           root,
@@ -1130,26 +1441,18 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
         );
       }
     });
-    root.querySelectorAll<HTMLInputElement>("[data-pet-select]").forEach((checkbox) => {
-      checkbox.addEventListener("change", () => {
-        const petId = checkbox.dataset.petSelect!;
-        if (checkbox.checked) {
-          popupViewState.selectedPetIds.add(petId);
-        } else {
-          popupViewState.selectedPetIds.delete(petId);
-        }
-        renderPopup(root, snapshot);
-      });
-    });
     root.querySelector("#manage-delete-selected")?.addEventListener("click", async () => {
       const petIds = [...popupViewState.selectedPetIds];
       if (!petIds.length) {
         return;
       }
+      popupViewState.pendingAction = "manage-delete-batch";
+      renderPopup(root, snapshot);
       await chrome.runtime.sendMessage({
         type: messageTypes.deletePets,
         payload: { petIds },
       });
+      popupViewState.pendingAction = null;
       popupViewState.selectedPetIds.clear();
       popupViewState.manageDeleteMode = false;
       popupViewState.manageContextMenu = null;
@@ -1238,7 +1541,24 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
 
   root.querySelector<HTMLInputElement>("#pet-file")?.addEventListener("change", async (event) => {
     const input = event.currentTarget as HTMLInputElement;
-    await batchImportFiles(root, snapshot, Array.from(input.files ?? []));
+    popupViewState.pendingAction = "import-files";
+    renderPopup(root, snapshot);
+    const payloadFiles = await Promise.all(Array.from(input.files ?? []).map((file) => encodeImportFile(file)));
+    await batchImportPayloadFiles(root, snapshot, payloadFiles);
+    popupViewState.pendingAction = null;
+    input.value = "";
+  });
+  root.querySelector<HTMLButtonElement>("#pet-folder-button")?.addEventListener("click", () => {
+    root.querySelector<HTMLInputElement>("#pet-folder")?.click();
+  });
+  root.querySelector<HTMLInputElement>("#pet-folder")?.addEventListener("change", async (event) => {
+    const input = event.currentTarget as HTMLInputElement;
+    popupViewState.pendingAction = "import-folder";
+    renderPopup(root, snapshot);
+    const { payloadFiles, preflightFailures } = await createFolderImportPayload(Array.from(input.files ?? []));
+    await batchImportPayloadFiles(root, snapshot, payloadFiles, preflightFailures);
+    popupViewState.pendingAction = null;
+    input.value = "";
   });
 
   const dropzone = root.querySelector<HTMLElement>("#pet-dropzone");
@@ -1263,7 +1583,21 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   dropzone?.addEventListener("drop", async (event) => {
     event.preventDefault();
     setDragActive(false);
-    await batchImportFiles(root, snapshot, Array.from(event.dataTransfer?.files ?? []));
+    popupViewState.pendingAction = "import-files";
+    renderPopup(root, snapshot);
+    const payloadFiles = await Promise.all(
+      Array.from(event.dataTransfer?.files ?? []).map((file) => encodeImportFile(file))
+    );
+    await batchImportPayloadFiles(root, snapshot, payloadFiles);
+    popupViewState.pendingAction = null;
+  });
+
+  root.addEventListener("click", (event) => {
+    const target = event.target as HTMLElement | null;
+    if (!target?.closest("#settings-panel") && !target?.closest("#settings-toggle") && popupViewState.settingsOpen) {
+      popupViewState.settingsOpen = false;
+      renderPopup(root, snapshot);
+    }
   });
 
 }
@@ -1272,10 +1606,12 @@ async function mountPopup(root: HTMLElement): Promise<void> {
   popupViewState.locale = await resolveInitialLocale();
   popupViewState.page = "home";
   popupViewState.dragActive = false;
+  popupViewState.settingsOpen = false;
   popupViewState.currentAnimationSpeed = defaultAnimationSpeed;
   popupViewState.managePageIndex = 0;
   popupViewState.manageDeleteMode = false;
   clearManageToast();
+  popupViewState.pendingAction = null;
   popupViewState.manageContextMenu = null;
   popupViewState.selectedPetIds.clear();
   const snapshot = await requestSnapshot();
