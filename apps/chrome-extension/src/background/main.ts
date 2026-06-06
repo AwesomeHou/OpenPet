@@ -29,6 +29,7 @@ type ChromeTabsApi = Pick<typeof chrome.tabs, "sendMessage" | "update" | "query"
 
 const storage = new OpenPetStorage();
 const tabState = new Map<number, TabPetState>();
+const publishDebounceMs = 150;
 const defaultPlacements: Record<SiteId, OverlayPlacement> = {
   deepseek: { left: 16, top: 16, facing: "right" },
   gemini: { left: 160, top: 16, facing: "right" },
@@ -167,6 +168,18 @@ export function createMessageHandler(
   const storageRepo = deps.storageRepo ?? storage;
   const tabsApi = deps.tabsApi ?? chrome.tabs;
   const stateMap = deps.tabStateMap ?? tabState;
+  let publishTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const schedulePublishKnownTabs = () => {
+    if (publishTimer !== null) {
+      clearTimeout(publishTimer);
+    }
+
+    publishTimer = setTimeout(() => {
+      publishTimer = null;
+      void publishKnownTabs(storageRepo, tabsApi, stateMap);
+    }, publishDebounceMs);
+  };
 
   return (
     message: OpenPetMessage,
@@ -180,7 +193,7 @@ export function createMessageHandler(
         JSON.stringify(message.payload)
       );
       stateMap.set(sender.tab.id, createTabState(sender.tab.id, sender.tab.url, message.payload));
-      void publishKnownTabs(storageRepo, tabsApi, stateMap);
+      schedulePublishKnownTabs();
       return;
     }
 

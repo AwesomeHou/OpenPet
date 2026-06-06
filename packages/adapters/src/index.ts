@@ -4,6 +4,7 @@ import {
   detectDeepSeekPage,
   findComposer as findDeepSeekComposer,
   findSendButton as findDeepSeekSendButton,
+  isDeepSeekResponseInProgress,
   isDeepSeekUrl,
 } from "./deepseek";
 import {
@@ -11,6 +12,7 @@ import {
   detectChatGPTPage,
   findChatGPTComposer,
   findChatGPTSendButton,
+  isChatGPTResponseInProgress,
   isChatGPTUrl,
 } from "./chatgpt";
 import {
@@ -18,6 +20,7 @@ import {
   detectDoubaoPage,
   findDoubaoComposer,
   findDoubaoSendButton,
+  isDoubaoResponseInProgress,
   isDoubaoUrl,
 } from "./doubao";
 import {
@@ -25,6 +28,7 @@ import {
   detectGeminiPage,
   findGeminiComposer,
   findGeminiSendButton,
+  isGeminiResponseInProgress,
   isGeminiUrl,
 } from "./gemini";
 
@@ -33,8 +37,10 @@ export interface SiteAdapter {
   matches(url: string): boolean;
   detectPage(doc: Document): boolean;
   getObservationRoot?(doc: Document): Element | Document;
+  getResponseRoot?(doc: Document): Element | Document;
   findComposer(doc: Document): Element | null;
   findSendButton(doc: Document): HTMLButtonElement | null;
+  isResponseInProgress?(doc: Document): boolean;
   collectSignals(doc: Document, previous?: Partial<RawPageSignals>): RawPageSignals;
 }
 
@@ -44,8 +50,10 @@ export const siteAdapters: SiteAdapter[] = [
     matches: isDeepSeekUrl,
     detectPage: detectDeepSeekPage,
     getObservationRoot: (doc) => doc,
+    getResponseRoot: (doc) => doc.querySelector("main") ?? doc.body ?? doc,
     findComposer: findDeepSeekComposer,
     findSendButton: findDeepSeekSendButton,
+    isResponseInProgress: isDeepSeekResponseInProgress,
     collectSignals: collectDeepSeekSignals,
   },
   {
@@ -53,8 +61,10 @@ export const siteAdapters: SiteAdapter[] = [
     matches: isGeminiUrl,
     detectPage: detectGeminiPage,
     getObservationRoot: (doc) => doc,
+    getResponseRoot: (doc) => doc.querySelector("main") ?? doc.body ?? doc,
     findComposer: findGeminiComposer,
     findSendButton: findGeminiSendButton,
+    isResponseInProgress: isGeminiResponseInProgress,
     collectSignals: collectGeminiSignals,
   },
   {
@@ -62,8 +72,10 @@ export const siteAdapters: SiteAdapter[] = [
     matches: isChatGPTUrl,
     detectPage: detectChatGPTPage,
     getObservationRoot: (doc) => doc.querySelector("main") ?? doc,
+    getResponseRoot: (doc) => doc.querySelector("main") ?? doc.body ?? doc,
     findComposer: findChatGPTComposer,
     findSendButton: findChatGPTSendButton,
+    isResponseInProgress: isChatGPTResponseInProgress,
     collectSignals: collectChatGPTSignals,
   },
   {
@@ -71,8 +83,10 @@ export const siteAdapters: SiteAdapter[] = [
     matches: isDoubaoUrl,
     detectPage: detectDoubaoPage,
     getObservationRoot: (doc) => doc.querySelector("main") ?? doc,
+    getResponseRoot: (doc) => doc.querySelector("main") ?? doc.body ?? doc,
     findComposer: findDoubaoComposer,
     findSendButton: findDoubaoSendButton,
+    isResponseInProgress: isDoubaoResponseInProgress,
     collectSignals: collectDoubaoSignals,
   },
 ];

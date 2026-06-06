@@ -6,22 +6,16 @@ import { getAdapterForUrl, type SiteAdapter } from "@openpet/adapters";
 type RuntimeTracker = {
   sendTriggeredAt: number | null;
   lastRelevantMutationAt: number | null;
-  networkActive: boolean;
   settleTimer: number | null;
   idleResetTimer: number | null;
   cycleSettled: boolean;
   cooldownUntil: number;
 };
 
-const networkStartEvent = "openpet:network-start";
-const networkEndEvent = "openpet:network-end";
-const networkProbeAttribute = "data-openpet-network-probe";
-
 function createRuntimeTracker(): RuntimeTracker {
   return {
     sendTriggeredAt: null,
     lastRelevantMutationAt: null,
-    networkActive: false,
     settleTimer: null,
     idleResetTimer: null,
     cycleSettled: false,
@@ -29,17 +23,12 @@ function createRuntimeTracker(): RuntimeTracker {
   };
 }
 
-function openSendCycle(runtime: RuntimeTracker, source: "user" | "network"): void {
-  const now = Date.now();
+function openSendCycle(runtime: RuntimeTracker): void {
   if (runtime.sendTriggeredAt !== null) {
     return;
   }
 
-  if (source === "network" && now < runtime.cooldownUntil) {
-    return;
-  }
-
-  runtime.sendTriggeredAt = now;
+  runtime.sendTriggeredAt = Date.now();
   runtime.lastRelevantMutationAt = null;
   runtime.cycleSettled = false;
   runtime.cooldownUntil = 0;
@@ -57,64 +46,13 @@ function clearScheduledTransitions(runtime: RuntimeTracker, view: Window): void 
   }
 }
 
-function injectNetworkProbe(doc: Document): void {
-  if (doc.documentElement.hasAttribute(networkProbeAttribute)) {
-    return;
-  }
-
-  doc.documentElement.setAttribute(networkProbeAttribute, "true");
-  const script = doc.createElement("script");
-  script.textContent = `
-    (() => {
-      const startEvent = ${JSON.stringify(networkStartEvent)};
-      const endEvent = ${JSON.stringify(networkEndEvent)};
-      let activeRequests = 0;
-      const dispatch = (name) => window.dispatchEvent(new CustomEvent(name));
-      const begin = () => {
-        activeRequests += 1;
-        if (activeRequests === 1) dispatch(startEvent);
-      };
-      const end = () => {
-        activeRequests = Math.max(0, activeRequests - 1);
-        if (activeRequests === 0) dispatch(endEvent);
-      };
-
-      const originalFetch = window.fetch;
-      if (typeof originalFetch === "function") {
-        window.fetch = async (...args) => {
-          begin();
-          try {
-            return await originalFetch(...args);
-          } finally {
-            end();
-          }
-        };
-      }
-
-      const OriginalXHR = window.XMLHttpRequest;
-      if (typeof OriginalXHR === "function") {
-        const originalOpen = OriginalXHR.prototype.open;
-        const originalSend = OriginalXHR.prototype.send;
-        OriginalXHR.prototype.open = function(...args) {
-          this.__openpetTracked = true;
-          return originalOpen.apply(this, args);
-        };
-        OriginalXHR.prototype.send = function(...args) {
-          if (this.__openpetTracked) {
-            begin();
-            this.addEventListener("loadend", () => end(), { once: true });
-          }
-          return originalSend.apply(this, args);
-        };
-      }
-    })();
-  `;
-  (doc.head ?? doc.documentElement).appendChild(script);
-  script.remove();
+function isElementTarget(doc: Document, target: EventTarget | null): target is Element {
+  const ElementCtor = doc.defaultView?.Element ?? Element;
+  return target instanceof ElementCtor;
 }
 
 function isComposerTarget(adapter: SiteAdapter, doc: Document, target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) {
+  if (!isElementTarget(doc, target)) {
     return false;
   }
 
@@ -123,7 +61,7 @@ function isComposerTarget(adapter: SiteAdapter, doc: Document, target: EventTarg
 }
 
 function isSendTriggerTarget(adapter: SiteAdapter, doc: Document, target: EventTarget | null): boolean {
-  if (!(target instanceof Element)) {
+  if (!isElementTarget(doc, target)) {
     return false;
   }
 
@@ -139,13 +77,14 @@ export function publishSignals(
   const baseSignals = adapter.collectSignals(doc, { sendTriggered: runtime.sendTriggeredAt !== null });
   const now = Date.now();
   const lastRelevantMutationAt = runtime.lastRelevantMutationAt;
+  const responseInProgress = runtime.sendTriggeredAt !== null && (adapter.isResponseInProgress?.(doc) ?? false);
   const responseGrowing =
     runtime.sendTriggeredAt !== null &&
-    (runtime.networkActive || lastRelevantMutationAt !== null) &&
+    lastRelevantMutationAt !== null &&
     (lastRelevantMutationAt === null || now - lastRelevantMutationAt < 1500);
   const settled =
     runtime.sendTriggeredAt !== null &&
-    !runtime.networkActive &&
+    !responseInProgress &&
     lastRelevantMutationAt !== null &&
     now - lastRelevantMutationAt >= 1500;
   const signals = {
@@ -198,6 +137,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
   const view = doc.defaultView ?? window;
   const adapter = getAdapterForUrl(doc.location.href);
   const observationRoot = adapter?.getObservationRoot?.(doc) ?? doc.documentElement;
+  const responseRoot = adapter?.getResponseRoot?.(doc) ?? observationRoot;
   chrome.runtime.onMessage.addListener((message: OpenPetMessage) => {
     handleContentMessage(message);
   });
@@ -210,8 +150,6 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     void requestCurrentDisplayState();
     return new MutationObserver(() => undefined);
   }
-
-  injectNetworkProbe(doc);
 
   let publishQueued = false;
   const queuePublish = () => {
@@ -239,7 +177,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     runtime.idleResetTimer = view.setTimeout(() => {
       if (
         runtime.sendTriggeredAt === null ||
-        runtime.networkActive ||
+        (adapter.isResponseInProgress?.(doc) ?? false) ||
         runtime.lastRelevantMutationAt === null
       ) {
         return;
@@ -261,7 +199,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     "click",
     (event) => {
       if (isSendTriggerTarget(adapter, doc, event.target)) {
-        openSendCycle(runtime, "user");
+        openSendCycle(runtime);
         scheduleStateTransitions();
         queuePublish();
       }
@@ -273,7 +211,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     "keydown",
     (event) => {
       if (event.key === "Enter" && !event.shiftKey && isComposerTarget(adapter, doc, event.target)) {
-        openSendCycle(runtime, "user");
+        openSendCycle(runtime);
         scheduleStateTransitions();
         queuePublish();
       }
@@ -298,25 +236,10 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     true
   );
 
-  view.addEventListener(networkStartEvent, () => {
-    runtime.networkActive = true;
-    openSendCycle(runtime, "network");
-    runtime.lastRelevantMutationAt = Date.now();
-    scheduleStateTransitions();
-    queuePublish();
-  });
-
-  view.addEventListener(networkEndEvent, () => {
-    runtime.networkActive = false;
-    runtime.lastRelevantMutationAt = Date.now();
-    scheduleStateTransitions();
-    queuePublish();
-  });
-
   const observer = new MutationObserver((mutations) => {
     const hasRelevantMutation = mutations.some((mutation) => {
       const targetNode =
-        mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        isElementTarget(doc, mutation.target) ? mutation.target : mutation.target.parentElement;
       return !targetNode?.closest?.(`#${overlayRootId}`);
     });
 
@@ -324,7 +247,27 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
       return;
     }
 
-    if (runtime.sendTriggeredAt !== null && !runtime.cycleSettled) {
+    const hasResponseMutation = mutations.some((mutation) => {
+      const targetNode =
+        isElementTarget(doc, mutation.target) ? mutation.target : mutation.target.parentElement;
+      if (!targetNode || targetNode.closest?.(`#${overlayRootId}`)) {
+        return false;
+      }
+      if (responseRoot instanceof Document) {
+        return true;
+      }
+      return targetNode === responseRoot || responseRoot.contains(targetNode);
+    });
+
+    if (
+      runtime.sendTriggeredAt === null &&
+      (adapter.isResponseInProgress?.(doc) ?? false)
+    ) {
+      openSendCycle(runtime);
+      scheduleStateTransitions();
+    }
+
+    if (runtime.sendTriggeredAt !== null && !runtime.cycleSettled && hasResponseMutation) {
       runtime.lastRelevantMutationAt = Date.now();
       scheduleStateTransitions();
     }
@@ -335,7 +278,8 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
   observer.observe(observationRoot, {
     subtree: true,
     childList: true,
-    attributes: false,
+    attributes: true,
+    attributeFilter: ["class", "aria-label", "title", "disabled", "data-testid"],
     characterData: false,
   });
 

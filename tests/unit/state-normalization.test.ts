@@ -21,8 +21,8 @@ describe("normalizeSignals", () => {
     expect(normalizeSignals(baseSignals({ composerReady: false }))).toBe("waiting");
   });
 
-  test("returns thinking before streaming begins", () => {
-    expect(normalizeSignals(baseSignals({ sendTriggered: true }))).toBe("thinking");
+  test("returns streaming once a send cycle is active", () => {
+    expect(normalizeSignals(baseSignals({ sendTriggered: true }))).toBe("streaming");
   });
 
   test("returns streaming when the response is growing", () => {

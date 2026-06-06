@@ -4,7 +4,7 @@ import { normalizedStates, petActionNames, siteIds } from "@openpet/shared/types
 
 describe("shared contracts", () => {
   test("normalized states stay within the PRD state set", () => {
-    expect(normalizedStates).toEqual(["idle", "thinking", "streaming", "waiting", "error", "done"]);
+    expect(normalizedStates).toEqual(["idle", "streaming", "waiting", "error", "done"]);
   });
 
   test("official pet action names stay aligned with the atlas contract", () => {

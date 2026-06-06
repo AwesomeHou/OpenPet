@@ -79,6 +79,73 @@ function createStorageStub(
 }
 
 describe("background message flow", () => {
+  test("coalesces rapid pageSignals into a single publish burst", async () => {
+    vi.useFakeTimers();
+    try {
+      const sendMessage = vi.fn(async () => undefined);
+      const tabsApi = {
+        sendMessage,
+        update: vi.fn(async () => undefined),
+        query: vi.fn(async () => [{ id: 7 }, { id: 8 }]),
+      };
+      const storageRepo = createStorageStub({
+        pets: [createPet("boba", "Boba")],
+        sitePetBindings: { deepseek: "boba" },
+        overlayVisible: true,
+      });
+      const stateMap = new Map<number, TabPetState>();
+      const handler = createMessageHandler({
+        storageRepo: storageRepo as never,
+        tabsApi: tabsApi as never,
+        tabStateMap: stateMap,
+      });
+
+      handler(
+        {
+          type: messageTypes.pageSignals,
+          payload: {
+            site: "deepseek",
+            composerReady: true,
+            sendTriggered: true,
+            responseGrowing: false,
+            errorVisible: false,
+            settled: false,
+            tabActive: true,
+            timestamp: 1,
+          },
+        },
+        { tab: { id: 7, url: "https://chat.deepseek.com/" } } as chrome.runtime.MessageSender,
+        vi.fn()
+      );
+      handler(
+        {
+          type: messageTypes.pageSignals,
+          payload: {
+            site: "deepseek",
+            composerReady: true,
+            sendTriggered: true,
+            responseGrowing: true,
+            errorVisible: false,
+            settled: false,
+            tabActive: true,
+            timestamp: 2,
+          },
+        },
+        { tab: { id: 7, url: "https://chat.deepseek.com/" } } as chrome.runtime.MessageSender,
+        vi.fn()
+      );
+
+      expect(sendMessage).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(150);
+      await vi.waitFor(() => {
+        expect(sendMessage).toHaveBeenCalledTimes(2);
+        expect(tabsApi.query).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("publishes a two-pet scene when DeepSeek and Gemini sessions are active", async () => {
     const sendMessage = vi.fn(async () => undefined);
     const tabsApi = {
@@ -149,7 +216,7 @@ describe("background message flow", () => {
                 expect.objectContaining({
                   siteId: "deepseek",
                   tabId: 7,
-                  state: "thinking",
+                  state: "streaming",
                   petId: "boba",
                 }),
                 expect.objectContaining({
@@ -582,7 +649,7 @@ describe("background message flow", () => {
           tabId: 7,
           url: "https://chat.deepseek.com/",
           site: "deepseek",
-          state: "thinking",
+          state: "streaming",
           updatedAt: 1,
         },
       ],
@@ -716,7 +783,7 @@ describe("background message flow", () => {
           tabId: 7,
           url: "https://chat.deepseek.com/",
           site: "deepseek",
-          state: "thinking",
+          state: "streaming",
           updatedAt: 1,
         },
       ],

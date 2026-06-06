@@ -17,7 +17,7 @@ function createSceneUpdate() {
             petId: "boba",
             siteId: "deepseek" as const,
             tabId: 7,
-            state: "thinking" as const,
+            state: "streaming" as const,
             pet: {
               id: "boba",
               displayName: "Boba",
@@ -113,7 +113,7 @@ describe("overlay rendering", () => {
     const root = getOverlayRoot();
     expect(root).not.toBeNull();
     expect(root?.querySelectorAll("button.openpet-button")).toHaveLength(2);
-    expect(root?.textContent).toContain("thinking");
+    expect(root?.textContent).toContain("streaming");
     expect(root?.textContent).toContain("streaming");
     expect(root?.querySelector<HTMLElement>('[data-pet-id="doodlebob"] .openpet-sprite')?.style.backgroundImage).toContain("data:image/webp");
     expect(root?.querySelector<HTMLElement>('[data-pet-id="boba"] .openpet-sprite')?.style.backgroundSize).toBe("768px 936px");
@@ -247,7 +247,7 @@ describe("overlay rendering", () => {
     const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
     const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
 
-    expect(sprite.dataset.action).toBe("review");
+    expect(sprite.dataset.action).toBe("running");
 
     button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
 
@@ -258,7 +258,7 @@ describe("overlay rendering", () => {
 
     button.onpointerleave?.(new Event("pointerleave") as PointerEvent);
 
-    expect(sprite.dataset.action).toBe("review");
+    expect(sprite.dataset.action).toBe("running");
   });
 
   test("keeps frame offsets aligned after pet resize", () => {
@@ -273,7 +273,7 @@ describe("overlay rendering", () => {
     const button = getOverlayRoot()?.querySelector('[data-pet-id="boba"]') as HTMLButtonElement;
     const sprite = button.querySelector(".openpet-sprite") as HTMLElement;
 
-    expect(sprite.style.backgroundPosition).toBe("0px -1248px");
+    expect(sprite.style.backgroundPosition).toBe("0px -1092px");
 
     button.onpointerenter?.(new Event("pointerenter") as PointerEvent);
     expect(sprite.style.backgroundPosition).toBe("0px -624px");
@@ -326,7 +326,7 @@ describe("overlay rendering", () => {
     expect(sprite.dataset.action).toBe("running-left");
 
     button.onpointerup?.(createPointerEvent("pointerup", { pointerId: 7, clientX: 4, clientY: 28 }) as PointerEvent);
-    expect(sprite.dataset.action).toBe("review");
+    expect(sprite.dataset.action).toBe("running");
   });
 
   test("switches drag direction immediately based on the latest movement delta", () => {

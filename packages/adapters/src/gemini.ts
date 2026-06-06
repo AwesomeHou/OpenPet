@@ -33,6 +33,24 @@ export function findGeminiSendButton(doc: Document): HTMLButtonElement | null {
   );
 }
 
+export function isGeminiResponseInProgress(doc: Document): boolean {
+  return Array.from(doc.querySelectorAll("button")).some((button) => {
+    const label = [
+      button.textContent ?? "",
+      button.getAttribute("aria-label") ?? "",
+      button.getAttribute("title") ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return (
+      label.includes("stop") ||
+      label.includes("停止") ||
+      label.includes("cancel") ||
+      label.includes("generating")
+    );
+  });
+}
+
 function findGeminiErrorText(doc: Document): boolean {
   const alertSelectors = [
     "[role='alert']",

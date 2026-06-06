@@ -109,7 +109,7 @@ test("loads the extension, detects the target page, shows the overlay, and impor
         },
         { timeout: 10000 }
       )
-      .toMatch(/thinking|streaming|done/);
+      .toMatch(/streaming|done/);
 
     console.log("[e2e] opening popup");
     const popup = await context.newPage();

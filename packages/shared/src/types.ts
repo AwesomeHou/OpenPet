@@ -1,6 +1,5 @@
 export const normalizedStates = [
   "idle",
-  "thinking",
   "streaming",
   "waiting",
   "error",

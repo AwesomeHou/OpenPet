@@ -7,7 +7,7 @@ import {
 import { getOverlayRoot } from "../../apps/chrome-extension/src/overlay/renderOverlay";
 import { messageTypes } from "@openpet/shared/messages";
 
-function createSceneMessage(state: "idle" | "thinking" | "streaming" | "waiting" | "error" | "done") {
+function createSceneMessage(state: "idle" | "streaming" | "waiting" | "error" | "done") {
   return {
     type: messageTypes.sceneUpdate,
     payload: {
@@ -78,6 +78,7 @@ describe("content and overlay flow", () => {
         payload: expect.objectContaining({ site: "gemini" }),
       })
     );
+    expect(dom.window.document.documentElement.getAttribute("data-openpet-network-probe")).toBeNull();
 
     handleContentMessage(createSceneMessage("done") as never);
 
@@ -122,7 +123,7 @@ describe("content and overlay flow", () => {
       },
     });
     const dom = new JSDOM(
-      `<div contenteditable="true" id="composer"></div><button aria-label="Send message">Send</button><main id="messages"></main>`,
+      `<div contenteditable="true" id="composer"></div><button aria-label="Send message">Send</button><main id="messages"><div id="stream-root"></div></main>`,
       {
         url: "https://gemini.google.com/app",
       }
@@ -135,14 +136,13 @@ describe("content and overlay flow", () => {
     const observer = bootstrapContentScript(dom.window.document);
     sendMessage.mockClear();
 
-    const sendButton = dom.window.document.querySelector("button") as HTMLButtonElement;
-    sendButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    const streamRoot = dom.window.document.querySelector("#stream-root") as HTMLElement;
+    const composer = dom.window.document.querySelector("#composer") as HTMLElement;
+    composer.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await Promise.resolve();
-    dom.window.dispatchEvent(new dom.window.CustomEvent("openpet:network-start"));
+    streamRoot.appendChild(dom.window.document.createElement("div"));
     await Promise.resolve();
-    dom.window.document.querySelector("#messages")?.appendChild(dom.window.document.createElement("div"));
-    await Promise.resolve();
-    dom.window.dispatchEvent(new dom.window.CustomEvent("openpet:network-end"));
+    streamRoot.appendChild(dom.window.document.createElement("div"));
     await Promise.resolve();
 
     vi.advanceTimersByTime(1700);
@@ -157,7 +157,7 @@ describe("content and overlay flow", () => {
       expect(settledStates).toHaveLength(1);
     });
 
-    dom.window.document.querySelector("#messages")?.appendChild(dom.window.document.createElement("div"));
+    streamRoot.appendChild(dom.window.document.createElement("div"));
     await Promise.resolve();
     vi.advanceTimersByTime(1700);
     await Promise.resolve();
@@ -167,6 +167,133 @@ describe("content and overlay flow", () => {
       .filter((message: { type: string }) => message.type === messageTypes.pageSignals)
       .map((message: { payload: { sendTriggered: boolean; responseGrowing: boolean; settled: boolean } }) => message.payload);
     expect(statePayloads.filter((payload) => payload.settled)).toHaveLength(1);
+
+    observer.disconnect();
+  });
+
+  test("cancels a send cycle when the composer changes before streaming starts", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage,
+        onMessage: {
+          addListener: vi.fn(),
+        },
+      },
+    });
+    const dom = new JSDOM(
+      `<div contenteditable="true" id="composer"></div><button aria-label="Send message">Send</button><main id="messages"></main>`,
+      { url: "https://gemini.google.com/app" }
+    );
+    Object.defineProperty(dom.window.document, "readyState", {
+      value: "complete",
+      configurable: true,
+    });
+
+    const observer = bootstrapContentScript(dom.window.document);
+    sendMessage.mockClear();
+
+    const composer = dom.window.document.querySelector("#composer") as HTMLElement;
+    composer.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await Promise.resolve();
+    composer.dispatchEvent(new dom.window.Event("input", { bubbles: true }));
+    await Promise.resolve();
+
+    await vi.waitFor(() => {
+      const statePayloads = sendMessage.mock.calls
+        .map(([message]) => message)
+        .filter((message: { type: string }) => message.type === messageTypes.pageSignals)
+        .map((message: { payload: { sendTriggered: boolean } }) => message.payload);
+      expect(statePayloads.at(-1)?.sendTriggered).toBe(false);
+    });
+
+    observer.disconnect();
+  });
+
+  test("keeps the cycle open while ChatGPT shows a stop-generating button", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage,
+        onMessage: {
+          addListener: vi.fn(),
+        },
+      },
+    });
+    const dom = new JSDOM(
+      `<textarea id="prompt-textarea"></textarea><button id="send-button" aria-label="Send prompt">Send</button><main id="messages"></main>`,
+      { url: "https://chatgpt.com/" }
+    );
+    Object.defineProperty(dom.window.document, "readyState", {
+      value: "complete",
+      configurable: true,
+    });
+
+    const observer = bootstrapContentScript(dom.window.document);
+    sendMessage.mockClear();
+
+    const composer = dom.window.document.querySelector("#prompt-textarea") as HTMLTextAreaElement;
+    const sendButton = dom.window.document.querySelector("#send-button") as HTMLButtonElement;
+    composer.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await Promise.resolve();
+    sendButton.setAttribute("aria-label", "Stop generating");
+    sendButton.textContent = "Stop";
+    sendButton.dispatchEvent(new dom.window.Event("attributes", { bubbles: true }));
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(1700);
+    await Promise.resolve();
+
+    const statePayloads = sendMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message: { type: string }) => message.type === messageTypes.pageSignals)
+      .map((message: { payload: { settled: boolean; sendTriggered: boolean } }) => message.payload);
+
+    expect(statePayloads.some((payload) => payload.settled)).toBe(false);
+    expect(statePayloads.at(-1)?.sendTriggered).toBe(true);
+
+    observer.disconnect();
+  });
+
+  test("opens a Doubao send cycle from button state changes without waiting for response DOM growth", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage,
+        onMessage: {
+          addListener: vi.fn(),
+        },
+      },
+    });
+    const dom = new JSDOM(
+      `<textarea placeholder="发消息..."></textarea><main><button class="send-msg-btn">发送</button></main>`,
+      { url: "https://www.doubao.com/chat/" }
+    );
+    Object.defineProperty(dom.window.document, "readyState", {
+      value: "complete",
+      configurable: true,
+    });
+
+    const observer = bootstrapContentScript(dom.window.document);
+    sendMessage.mockClear();
+
+    const sendButton = dom.window.document.querySelector("button") as HTMLButtonElement;
+    sendButton.className = "send-msg-btn generating";
+    sendButton.setAttribute("title", "Stop generating");
+    await Promise.resolve();
+
+    await vi.waitFor(() => {
+      const statePayloads = sendMessage.mock.calls
+        .map(([message]) => message)
+        .filter((message: { type: string }) => message.type === messageTypes.pageSignals)
+        .map(
+          (message: {
+            payload: { sendTriggered: boolean; responseGrowing: boolean; settled: boolean };
+          }) => message.payload
+        );
+      expect(statePayloads.at(-1)?.sendTriggered).toBe(true);
+      expect(statePayloads.at(-1)?.settled).toBe(false);
+    });
 
     observer.disconnect();
   });

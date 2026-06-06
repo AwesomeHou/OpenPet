@@ -38,7 +38,6 @@ const actionAnimations: Record<
 
 const businessStateToAction: Record<ScenePetState["state"], PetActionName> = {
   idle: "idle",
-  thinking: "review",
   streaming: "running",
   waiting: "waiting",
   error: "failed",

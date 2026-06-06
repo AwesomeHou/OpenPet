@@ -32,6 +32,19 @@ export function findSendButton(doc: Document): HTMLButtonElement | null {
   );
 }
 
+export function isDeepSeekResponseInProgress(doc: Document): boolean {
+  return Array.from(doc.querySelectorAll("button")).some((button) => {
+    const label = [
+      button.textContent || "",
+      button.getAttribute("aria-label") || "",
+      button.getAttribute("title") || "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return label.includes("stop") || label.includes("停止") || label.includes("中止");
+  });
+}
+
 function findErrorText(doc: Document): boolean {
   const selectors = ["[role='alert']", "[aria-live='assertive']", "[data-error]", ".error"];
   return selectors.some((selector) =>

@@ -14,7 +14,7 @@ export function normalizeSignals(signals: RawPageSignals): NormalizedState {
   }
 
   if (signals.sendTriggered && !signals.settled) {
-    return "thinking";
+    return "streaming";
   }
 
   if (signals.settled) {

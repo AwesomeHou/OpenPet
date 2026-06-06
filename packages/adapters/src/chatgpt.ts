@@ -46,6 +46,20 @@ export function findChatGPTSendButton(doc: Document): HTMLButtonElement | null {
   );
 }
 
+export function isChatGPTResponseInProgress(doc: Document): boolean {
+  return Array.from(doc.querySelectorAll("button")).some((button) => {
+    const label = [
+      button.textContent ?? "",
+      button.getAttribute("aria-label") ?? "",
+      button.getAttribute("title") ?? "",
+      button.getAttribute("data-testid") ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return label.includes("stop generating") || label.includes("stop") || label.includes("abort");
+  });
+}
+
 function findChatGPTErrorText(doc: Document): boolean {
   const selectors = ["[role='alert']", "[aria-live='assertive']", ".text-red-500", ".text-danger"];
   return selectors.some((selector) =>

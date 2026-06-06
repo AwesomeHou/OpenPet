@@ -24,7 +24,7 @@ export function findDoubaoComposer(doc: Document): HTMLElement | null {
 export function findDoubaoSendButton(doc: Document): HTMLButtonElement | null {
   const explicitButton =
     (doc.querySelector("button[class*='send-msg-btn']") as HTMLButtonElement | null) ??
-    (doc.querySelector("button[aria-label='']") as HTMLButtonElement | null);
+    (doc.querySelector("button[data-testid*='send']") as HTMLButtonElement | null);
   if (explicitButton) {
     return explicitButton;
   }
@@ -43,10 +43,29 @@ export function findDoubaoSendButton(doc: Document): HTMLButtonElement | null {
         label.includes("发送") ||
         label.includes("send") ||
         label.includes("提交") ||
-        label.includes("继续")
+        label.includes("continue")
       );
     }) ?? null
   );
+}
+
+export function isDoubaoResponseInProgress(doc: Document): boolean {
+  return Array.from(doc.querySelectorAll("button")).some((button) => {
+    const label = [
+      button.textContent ?? "",
+      button.getAttribute("aria-label") ?? "",
+      button.getAttribute("title") ?? "",
+      button.getAttribute("class") ?? "",
+    ]
+      .join(" ")
+      .toLowerCase();
+    return (
+      label.includes("stop") ||
+      label.includes("停止") ||
+      label.includes("中止") ||
+      label.includes("generating")
+    );
+  });
 }
 
 function findDoubaoErrorText(doc: Document): boolean {
