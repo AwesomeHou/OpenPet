@@ -1,5 +1,6 @@
 export const storageKeys = {
   pets: "openpet.pets",
+  builtinPetsSeedVersion: "openpet.builtinPetsSeedVersion",
   sitePetBindings: "openpet.sitePetBindings",
   sitePetVisibility: "openpet.sitePetVisibility",
   overlayVisible: "openpet.overlayVisible",

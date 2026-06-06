@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
-import { createMessageHandler } from "../../apps/chrome-extension/src/background/main";
+import { createMessageHandler, ensureBuiltinPetsSeeded } from "../../apps/chrome-extension/src/background/main";
 import { messageTypes } from "@openpet/shared/messages";
-import type { StoredPetRecord, TabPetState } from "@openpet/shared/types";
+import type { SiteId, StoredPetRecord, TabPetState } from "@openpet/shared/types";
 import JSZip from "jszip";
 
 function createPet(id: string, displayName: string): StoredPetRecord {
@@ -17,11 +17,12 @@ function createPet(id: string, displayName: string): StoredPetRecord {
 function createStorageStub(
   overrides: Partial<{
     pets: StoredPetRecord[];
-    sitePetBindings: Partial<Record<"deepseek" | "gemini", string>>;
-    sitePetVisibility: Partial<Record<"deepseek" | "gemini", boolean>>;
+    sitePetBindings: Partial<Record<SiteId, string>>;
+    sitePetVisibility: Partial<Record<SiteId, boolean>>;
     overlayVisible: boolean;
-    petSizes: Partial<Record<"deepseek" | "gemini", number>>;
+    petSizes: Partial<Record<SiteId, number>>;
     animationSpeed: number;
+    builtinPetsSeedVersion: string | null;
   }> = {}
 ) {
   const state = {
@@ -31,6 +32,7 @@ function createStorageStub(
     overlayVisible: overrides.overlayVisible ?? true,
     petSizes: overrides.petSizes ?? {},
     animationSpeed: overrides.animationSpeed ?? 1,
+    builtinPetsSeedVersion: overrides.builtinPetsSeedVersion ?? null,
   };
 
   return {
@@ -39,11 +41,17 @@ function createStorageStub(
       state.pets = [...state.pets.filter((item) => item.id !== pet.id), pet];
     }),
     getSitePetBindings: vi.fn(async () => state.sitePetBindings),
-    setSitePetBinding: vi.fn(async (siteId: "deepseek" | "gemini", petId: string) => {
-      state.sitePetBindings = { ...state.sitePetBindings, [siteId]: petId };
+    setSitePetBinding: vi.fn(async (siteId: SiteId, petId: string | null) => {
+      if (petId) {
+        state.sitePetBindings = { ...state.sitePetBindings, [siteId]: petId };
+      } else {
+        state.sitePetBindings = Object.fromEntries(
+          Object.entries(state.sitePetBindings).filter(([existingSiteId]) => existingSiteId !== siteId)
+        ) as Partial<Record<SiteId, string>>;
+      }
     }),
     getSitePetVisibility: vi.fn(async () => state.sitePetVisibility),
-    setSitePetVisibility: vi.fn(async (siteId: "deepseek" | "gemini", visible: boolean) => {
+    setSitePetVisibility: vi.fn(async (siteId: SiteId, visible: boolean) => {
       state.sitePetVisibility = { ...state.sitePetVisibility, [siteId]: visible };
     }),
     clearSitePetBindings: vi.fn(async () => {
@@ -53,8 +61,8 @@ function createStorageStub(
     getOverlayPlacement: vi.fn(async () => null),
     setOverlayPlacement: vi.fn(async () => undefined),
     getPetSizes: vi.fn(async () => state.petSizes),
-    getPetSize: vi.fn(async (siteId: "deepseek" | "gemini") => state.petSizes[siteId] ?? null),
-    setPetSize: vi.fn(async (siteId: "deepseek" | "gemini", size: number) => {
+    getPetSize: vi.fn(async (siteId: SiteId) => state.petSizes[siteId] ?? null),
+    setPetSize: vi.fn(async (siteId: SiteId, size: number) => {
       state.petSizes = { ...state.petSizes, [siteId]: size };
     }),
     isOverlayVisible: vi.fn(async () => state.overlayVisible),
@@ -65,11 +73,15 @@ function createStorageStub(
     setAnimationSpeed: vi.fn(async (speed: number) => {
       state.animationSpeed = speed;
     }),
+    getBuiltinPetsSeedVersion: vi.fn(async () => state.builtinPetsSeedVersion),
+    setBuiltinPetsSeedVersion: vi.fn(async (version: string) => {
+      state.builtinPetsSeedVersion = version;
+    }),
     deletePets: vi.fn(async (petIds: string[]) => {
       state.pets = state.pets.filter((pet) => !petIds.includes(pet.id));
       state.sitePetBindings = Object.fromEntries(
         Object.entries(state.sitePetBindings).filter(([, petId]) => !petIds.includes(petId))
-      ) as Partial<Record<"deepseek" | "gemini", string>>;
+      ) as Partial<Record<SiteId, string>>;
     }),
     clearPets: vi.fn(async () => {
       state.pets = [];
@@ -77,6 +89,96 @@ function createStorageStub(
     }),
   };
 }
+
+async function createValidZipBytes(id: string, displayName: string): Promise<number[]> {
+  const zip = new JSZip();
+  zip.file(
+    "pet.json",
+    JSON.stringify({
+      id,
+      displayName,
+      spritesheetPath: "spritesheet.webp",
+    })
+  );
+  zip.file("spritesheet.webp", new Uint8Array([65, 66, 67]));
+
+  return Array.from(await zip.generateAsync({ type: "uint8array" }));
+}
+
+describe("builtin pet seeding", () => {
+  test("seeds builtin pets and default bindings on first install only", async () => {
+    const storageRepo = createStorageStub({
+      pets: [],
+      sitePetBindings: {},
+      sitePetVisibility: {},
+      builtinPetsSeedVersion: null,
+    });
+    const archiveBytesByPetId = {
+      chatgpt: await createValidZipBytes("chatgpt", "ChatGPT"),
+      deepseek: await createValidZipBytes("deepseek", "DeepSeek"),
+      doubao: await createValidZipBytes("doubao", "Doubao"),
+      gemini: await createValidZipBytes("gemini", "Gemini"),
+    } satisfies Record<SiteId, number[]>;
+    const loadArchive = vi.fn(async (petId: SiteId) => archiveBytesByPetId[petId]);
+
+    await ensureBuiltinPetsSeeded(storageRepo as never, {
+      loadArchive,
+      reason: "install",
+    });
+
+    expect(storageRepo.savePet).toHaveBeenCalledTimes(4);
+    expect(storageRepo.setSitePetBinding).toHaveBeenCalledTimes(4);
+    expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("chatgpt", "chatgpt");
+    expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("deepseek", "deepseek");
+    expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("doubao", "doubao");
+    expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("gemini", "gemini");
+    expect(storageRepo.setBuiltinPetsSeedVersion).toHaveBeenCalledWith("v1");
+    expect(loadArchive).toHaveBeenCalledTimes(4);
+  });
+
+  test("does not reseed or overwrite user bindings after initialization has already run", async () => {
+    const storageRepo = createStorageStub({
+      pets: [createPet("chatgpt", "ChatGPT"), createPet("deepseek", "DeepSeek")],
+      sitePetBindings: {
+        chatgpt: "my-custom-chatgpt",
+        deepseek: "deepseek",
+      },
+      builtinPetsSeedVersion: "v1",
+    });
+    const loadArchive = vi.fn(async () => {
+      throw new Error("should not load archive when already seeded");
+    });
+
+    await ensureBuiltinPetsSeeded(storageRepo as never, {
+      loadArchive,
+      reason: "install",
+    });
+
+    expect(storageRepo.savePet).not.toHaveBeenCalled();
+    expect(storageRepo.setSitePetBinding).not.toHaveBeenCalled();
+    expect(storageRepo.setBuiltinPetsSeedVersion).not.toHaveBeenCalled();
+    expect(loadArchive).not.toHaveBeenCalled();
+  });
+
+  test("does not seed builtin pets during extension update", async () => {
+    const storageRepo = createStorageStub({
+      builtinPetsSeedVersion: null,
+    });
+    const loadArchive = vi.fn(async () => {
+      throw new Error("should not load archive during update");
+    });
+
+    await ensureBuiltinPetsSeeded(storageRepo as never, {
+      loadArchive,
+      reason: "update",
+    });
+
+    expect(storageRepo.savePet).not.toHaveBeenCalled();
+    expect(storageRepo.setSitePetBinding).not.toHaveBeenCalled();
+    expect(storageRepo.setBuiltinPetsSeedVersion).not.toHaveBeenCalled();
+    expect(loadArchive).not.toHaveBeenCalled();
+  });
+});
 
 describe("background message flow", () => {
   test("coalesces rapid pageSignals into a single publish burst", async () => {

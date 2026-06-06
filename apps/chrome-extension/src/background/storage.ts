@@ -23,6 +23,16 @@ export class OpenPetStorage {
     return Array.isArray(result[storageKeys.pets]) ? result[storageKeys.pets] : [];
   }
 
+  async getBuiltinPetsSeedVersion(): Promise<string | null> {
+    const result = await this.requireArea().get(storageKeys.builtinPetsSeedVersion);
+    const version = result[storageKeys.builtinPetsSeedVersion];
+    return typeof version === "string" && version.trim().length > 0 ? version : null;
+  }
+
+  async setBuiltinPetsSeedVersion(version: string): Promise<void> {
+    await this.requireArea().set({ [storageKeys.builtinPetsSeedVersion]: version });
+  }
+
   async savePet(record: StoredPetRecord): Promise<void> {
     const pets = await this.getPets();
     const nextPets = [...pets.filter((pet) => pet.id !== record.id), record];

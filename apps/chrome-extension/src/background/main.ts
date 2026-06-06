@@ -23,6 +23,7 @@ import { createTabState } from "@openpet/state/sessionState";
 import { importPetFromZip } from "@openpet/pet-assets/importPet";
 import { normalizePetImportError } from "@openpet/pet-assets/errors";
 import { defaultAnimationSpeed, defaultPetSize, maxAnimationSpeed, minAnimationSpeed } from "@openpet/shared/constants";
+import { ensureBuiltinPetsSeeded } from "./builtinPets";
 import { OpenPetStorage } from "./storage";
 
 type ChromeTabsApi = Pick<typeof chrome.tabs, "sendMessage" | "update" | "query">;
@@ -410,8 +411,11 @@ export function createMessageHandler(
 }
 
 export function registerBackgroundListeners(): void {
-  chrome.runtime.onInstalled.addListener(() => {
-    void storage.setOverlayVisible(true);
+  chrome.runtime.onInstalled.addListener((details) => {
+    void (async () => {
+      await storage.setOverlayVisible(true);
+      await ensureBuiltinPetsSeeded(storage, { reason: details.reason });
+    })();
   });
   chrome.runtime.onMessage.addListener(createMessageHandler());
   chrome.tabs.onActivated.addListener(({ tabId }) => {
@@ -433,3 +437,4 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
 }
 
 export { OpenPetStorage };
+export { ensureBuiltinPetsSeeded };
