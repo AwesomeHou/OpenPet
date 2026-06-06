@@ -26,6 +26,11 @@ type PopupSnapshot = {
   animationSpeed: number;
 };
 
+type ActionResponse = {
+  ok?: boolean;
+  error?: string;
+};
+
 type PopupPage = "home" | "manage";
 
 type PopupViewState = {
@@ -77,8 +82,37 @@ let manageToastTimer: number | null = null;
 
 type ImportFailureItem = {
   filename: string;
-  code: PetImportErrorCode;
+  code?: PetImportErrorCode;
   error: string;
+};
+
+type FolderImportFile = File & {
+  webkitRelativePath?: string;
+};
+
+type WebkitFileEntry = {
+  isFile: true;
+  isDirectory: false;
+  fullPath?: string;
+  file: (callback: (file: File) => void, errorCallback?: (error: unknown) => void) => void;
+};
+
+type WebkitDirectoryEntry = {
+  isFile: false;
+  isDirectory: true;
+  fullPath?: string;
+  createReader: () => {
+    readEntries: (
+      callback: (entries: Array<WebkitFileSystemEntry>) => void,
+      errorCallback?: (error: unknown) => void
+    ) => void;
+  };
+};
+
+type WebkitFileSystemEntry = WebkitFileEntry | WebkitDirectoryEntry;
+
+type WebkitDataTransferItem = DataTransferItem & {
+  webkitGetAsEntry?: () => WebkitFileSystemEntry | null;
 };
 
 const supportedSites: SiteId[] = ["deepseek", "gemini", "chatgpt", "doubao"];
@@ -140,6 +174,14 @@ const popupStyles = `
     align-items: center;
     gap: 10px;
     min-width: 0;
+  }
+  .popup-title-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    color: inherit;
+    text-decoration: none;
   }
   .popup-logo {
     width: 30px;
@@ -678,6 +720,9 @@ const localeCopy = {
     languageTitle: "Language",
     feedbackTitle: "Feedback",
     githubIssues: "GitHub Issues",
+    repositoryTitle: "Open Source",
+    repositoryLink: "OpenPet",
+    versionTitle: "Version",
     importPet: "Import pet",
     importModeZip: "ZIP",
     importModeFolder: "Folder",
@@ -686,9 +731,8 @@ const localeCopy = {
     companionNote: "For a persistent desktop experience, a companion app will be available later.",
     importZip: "Import pet zip",
     importFolder: "Import pet folder",
-    importDropHint: "Click to choose .zip files, or drop multiple .zip files here",
-    importFolderHint:
-      "Choose a pet folder directly, or choose a parent folder to import each direct pet subfolder",
+    importDropHint: "Click to choose or drop .zip files",
+    importFolderHint: "Click to choose or drop folders",
     importPreviewUnavailable: "Preview unavailable",
     clearPetData: "Clear pet data",
     deepseekPet: "DeepSeek pet",
@@ -701,7 +745,9 @@ const localeCopy = {
     importedSummary: "Imported {imported} · Overwritten {overwritten} · Failed {failed}",
     importFailureCodePrefix: "Error code",
     importedFailure: "Import failed: {error}",
+    importZipOnlyFailure: "Please drop .zip files only in ZIP mode.",
     importPending: "Importing pets...",
+    importRequestFailureItem: "Import request",
     boundFeedback: "Bound {site} to {pet}",
     unboundFeedback: "Cleared {site} binding",
     visibilityFeedback: "{site} display {state}",
@@ -743,6 +789,9 @@ const localeCopy = {
     languageTitle: "语言",
     feedbackTitle: "反馈通道",
     githubIssues: "GitHub Issues",
+    repositoryTitle: "开源仓库",
+    repositoryLink: "OpenPet",
+    versionTitle: "当前版本",
     importPet: "导入宠物",
     importModeZip: "ZIP",
     importModeFolder: "文件夹",
@@ -751,8 +800,8 @@ const localeCopy = {
     companionNote: "需要桌面常驻体验时，未来可搭配 companion app 使用。",
     importZip: "导入宠物 zip",
     importFolder: "导入宠物文件夹",
-    importDropHint: "点击选择 .zip 文件，也可拖入多个 .zip 文件",
-    importFolderHint: "可直接选择单个宠物文件夹，或选择父目录批量导入其直接宠物子文件夹",
+    importDropHint: "点击选择或拖入.zip文件",
+    importFolderHint: "点击选择或拖入文件夹",
     importPreviewUnavailable: "暂无预览",
     clearPetData: "清空宠物数据",
     deepseekPet: "DeepSeek 宠物",
@@ -765,7 +814,9 @@ const localeCopy = {
     importedSummary: "成功导入 {imported} · 已覆盖 {overwritten} · 失败 {failed}",
     importFailureCodePrefix: "错误码",
     importedFailure: "导入失败：{error}",
+    importZipOnlyFailure: "ZIP 模式下仅支持拖入 .zip 文件。",
     importPending: "正在导入宠物...",
+    importRequestFailureItem: "导入请求",
     boundFeedback: "已将 {site} 绑定到 {pet}",
     unboundFeedback: "已清除 {site} 绑定",
     visibilityFeedback: "{site} 显示已{state}",
@@ -882,6 +933,26 @@ function renderIconLabel(filename: string, label: string, className = "button-ic
   return `<span class="button-with-icon">${renderIcon(filename, "", className)}<span>${escapeHtml(label)}</span></span>`;
 }
 
+function getPopupVersion(): string {
+  return globalThis.chrome?.runtime?.getManifest?.().version ?? "0.1.0";
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
+function getActionResponseError(response: unknown, fallback: string): string {
+  if (response && typeof response === "object" && "error" in response && typeof response.error === "string") {
+    return response.error;
+  }
+
+  return fallback;
+}
+
 function getPetDisplayName(snapshot: PopupSnapshot, petId: string): string {
   return snapshot.pets.find((pet) => pet.id === petId)?.displayName ?? petId;
 }
@@ -914,13 +985,100 @@ async function encodeImportFile(file: File): Promise<{ filename: string; bytes: 
   };
 }
 
+async function readFileEntry(entry: WebkitFileEntry): Promise<FolderImportFile> {
+  return new Promise((resolve, reject) => {
+    entry.file(
+      (file) => {
+        const relativePath = entry.fullPath?.replace(/^\/+/, "") || file.webkitRelativePath || file.name;
+        Object.defineProperty(file, "webkitRelativePath", {
+          value: relativePath,
+          configurable: true,
+        });
+        resolve(file as FolderImportFile);
+      },
+      (error) => reject(error)
+    );
+  });
+}
+
+async function readDirectoryEntries(entry: WebkitDirectoryEntry): Promise<WebkitFileSystemEntry[]> {
+  const reader = entry.createReader();
+  const entries: WebkitFileSystemEntry[] = [];
+
+  while (true) {
+    const batch = await new Promise<WebkitFileSystemEntry[]>((resolve, reject) => {
+      reader.readEntries(resolve, reject);
+    });
+    if (!batch.length) {
+      break;
+    }
+    entries.push(...batch);
+  }
+
+  return entries;
+}
+
+async function collectDroppedDirectoryFiles(entry: WebkitFileSystemEntry): Promise<FolderImportFile[]> {
+  if (entry.isFile) {
+    return [await readFileEntry(entry)];
+  }
+
+  const nestedEntries = await readDirectoryEntries(entry);
+  const nestedFiles = await Promise.all(nestedEntries.map((nestedEntry) => collectDroppedDirectoryFiles(nestedEntry)));
+  return nestedFiles.flat();
+}
+
+async function extractFolderDropFiles(dataTransfer: DataTransfer | null): Promise<FolderImportFile[]> {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const items = Array.from(dataTransfer.items ?? []) as WebkitDataTransferItem[];
+  const entryItems = items
+    .map((item) => item.webkitGetAsEntry?.() ?? null)
+    .filter((entry): entry is WebkitFileSystemEntry => Boolean(entry));
+
+  if (entryItems.length) {
+    const nestedFiles = await Promise.all(entryItems.map((entry) => collectDroppedDirectoryFiles(entry)));
+    return nestedFiles.flat();
+  }
+
+  return Array.from(dataTransfer.files ?? []) as FolderImportFile[];
+}
+
+function getZipDropPreflightFailures(dataTransfer: DataTransfer | null, locale: PopupLocale): ImportFailureItem[] {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const items = Array.from(dataTransfer.items ?? []) as WebkitDataTransferItem[];
+  const entryItems = items
+    .map((item) => item.webkitGetAsEntry?.() ?? null)
+    .filter((entry): entry is WebkitFileSystemEntry => Boolean(entry));
+
+  const directoryEntries = entryItems.filter((entry) => entry.isDirectory);
+  if (!directoryEntries.length) {
+    return [];
+  }
+
+  return directoryEntries.map((entry) => {
+    const fullPath = entry.fullPath?.replace(/^\/+/, "") ?? "";
+    const filename = fullPath.split(/[\\/]/).filter(Boolean).pop() || "folder";
+    return {
+      filename,
+      error: translate(locale, "importZipOnlyFailure"),
+    };
+  });
+}
+
 async function createFolderImportPayload(
-  files: File[]
+  files: FolderImportFile[]
 ): Promise<{
   payloadFiles: Array<{ filename: string; bytes: number[] }>;
   preflightFailures: ImportFailureItem[];
 }> {
   const groups = new Map<string, Array<{ path: string; file: File }>>();
+  const preflightFailures: ImportFailureItem[] = [];
   const entries = files.map((file) => {
     const relativePath = file.webkitRelativePath || file.name;
     return {
@@ -928,50 +1086,45 @@ async function createFolderImportPayload(
       segments: relativePath.split(/[\\/]/).filter(Boolean),
     };
   });
-  const isSinglePetFolderSelection = entries.some(
-    (entry) => entry.segments.length === 2 && /^pet\.json$/i.test(entry.segments[1] ?? "")
-  );
 
   for (const entry of entries) {
     const { file, segments } = entry;
-    if (isSinglePetFolderSelection) {
-      if (segments.length < 2) {
-        continue;
-      }
-      const folderName = segments[0];
-      const petRelativePath = segments.slice(1).join("/");
-      const group = groups.get(folderName) ?? [];
-      group.push({ path: petRelativePath, file });
-      groups.set(folderName, group);
+    if (segments.length < 2) {
+      preflightFailures.push({
+        filename: file.name,
+        code: "E_FOLDER_INVALID_STRUCTURE",
+        error: "Selected folder must be a pet folder containing pet.json at its top level.",
+      });
       continue;
     }
 
-    if (segments.length < 3) {
-      continue;
-    }
-    const folderName = segments[1];
-    const petRelativePath = segments.slice(2).join("/");
+    const folderName = segments[0];
+    const petRelativePath = segments.slice(1).join("/");
     const group = groups.get(folderName) ?? [];
     group.push({ path: petRelativePath, file });
     groups.set(folderName, group);
   }
 
-  if (!groups.size) {
-    return {
-      payloadFiles: [],
-      preflightFailures: [
-        {
-          filename: entries[0]?.segments[0] ?? "folder",
+  const validGroups = [...groups.entries()].filter(([, folderFiles]) => {
+    const hasPetJson = folderFiles.some((groupEntry) => /^pet\.json$/i.test(groupEntry.path));
+    if (!hasPetJson) {
+      const topLevelZipFiles = folderFiles.filter(
+        (groupEntry) => !groupEntry.path.includes("/") && /\.zip$/i.test(groupEntry.path)
+      );
+      const failureTargets = topLevelZipFiles.length ? topLevelZipFiles.map((groupEntry) => groupEntry.path) : [folderFiles[0]?.path ?? "folder"];
+      for (const failureTarget of failureTargets) {
+        preflightFailures.push({
+          filename: failureTarget,
           code: "E_FOLDER_INVALID_STRUCTURE",
-          error:
-            "Selected folder must either be a pet folder containing pet.json, or contain complete pet folders as direct children.",
-        },
-      ],
-    };
-  }
+          error: "Selected folder must be a pet folder containing pet.json at its top level.",
+        });
+      }
+    }
+    return hasPetJson;
+  });
 
   const payloadFiles = await Promise.all(
-    [...groups.entries()].map(async ([folderName, folderFiles]) => {
+    validGroups.map(async ([folderName, folderFiles]) => {
       const zip = new JSZip();
       for (const entry of folderFiles) {
         const buffer =
@@ -990,7 +1143,7 @@ async function createFolderImportPayload(
 
   return {
     payloadFiles,
-    preflightFailures: [],
+    preflightFailures,
   };
 }
 
@@ -1012,12 +1165,30 @@ function buildImportFeedbackMessage(
   ];
 
   for (const failure of failures) {
-    lines.push(
-      `${failure.filename} · ${translate(locale, "importFailureCodePrefix")}: ${failure.code} · ${failure.error}`
-    );
+    const parts = [failure.filename];
+    if (failure.code) {
+      parts.push(`${translate(locale, "importFailureCodePrefix")}: ${failure.code}`);
+    }
+    parts.push(failure.error);
+    lines.push(parts.join(" · "));
   }
 
   return lines.join("\n");
+}
+
+function settleImportPreflightFailure(root: HTMLElement, snapshot: PopupSnapshot, error: unknown) {
+  popupViewState.pendingAction = null;
+  popupViewState.feedbackMessage = buildImportFeedbackMessage(
+    popupViewState.locale,
+    { imported: 0, overwritten: 0, failed: 1 },
+    [
+      {
+        filename: translate(popupViewState.locale, "importRequestFailureItem"),
+        error: getErrorMessage(error, "Unexpected failure"),
+      },
+    ]
+  );
+  renderPopup(root, snapshot);
 }
 
 async function batchImportPayloadFiles(
@@ -1027,6 +1198,8 @@ async function batchImportPayloadFiles(
   preflightFailures: ImportFailureItem[] = []
 ): Promise<void> {
   if (!payloadFiles.length && !preflightFailures.length) {
+    popupViewState.pendingAction = null;
+    renderPopup(root, snapshot);
     return;
   }
 
@@ -1048,9 +1221,16 @@ async function batchImportPayloadFiles(
     });
     if (!result?.ok) {
       popupViewState.pendingAction = null;
-      popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFailure", {
-        error: result?.error ?? "Unknown failure",
-      });
+      popupViewState.feedbackMessage = buildImportFeedbackMessage(
+        popupViewState.locale,
+        { imported: 0, overwritten: 0, failed: 1 },
+        [
+          {
+            filename: translate(popupViewState.locale, "importRequestFailureItem"),
+            error: getActionResponseError(result, "Unknown failure"),
+          },
+        ]
+      );
       renderPopup(root, snapshot);
       return;
     }
@@ -1068,11 +1248,18 @@ async function batchImportPayloadFiles(
       failures
     );
     renderPopup(root, nextSnapshot);
-  } catch {
+  } catch (error) {
     popupViewState.pendingAction = null;
-    popupViewState.feedbackMessage = translate(popupViewState.locale, "importedFailure", {
-      error: "Unexpected failure",
-    });
+    popupViewState.feedbackMessage = buildImportFeedbackMessage(
+      popupViewState.locale,
+      { imported: 0, overwritten: 0, failed: 1 },
+      [
+        {
+          filename: translate(popupViewState.locale, "importRequestFailureItem"),
+          error: getErrorMessage(error, "Unexpected failure"),
+        },
+      ]
+    );
     renderPopup(root, snapshot);
   }
 }
@@ -1384,6 +1571,7 @@ function renderSettingsPanel(): string {
   const locale = popupViewState.locale;
   const copy = localeCopy[locale];
   const animationSpeed = clampAnimationSpeed(popupViewState.currentAnimationSpeed);
+  const version = getPopupVersion();
 
   return `
     <div id="settings-panel" class="settings-panel">
@@ -1425,6 +1613,20 @@ function renderSettingsPanel(): string {
           rel="noreferrer"
         >${copy.githubIssues}</a>
       </div>
+      <div class="settings-row">
+        <div class="settings-row-label">${copy.repositoryTitle}</div>
+        <a
+          id="github-star-link"
+          class="secondary-button settings-link settings-row-control"
+          href="https://github.com/AwesomeHou/OpenPet"
+          target="_blank"
+          rel="noreferrer"
+        >${renderIconLabel("icon-github.svg", copy.repositoryLink)}</a>
+      </div>
+      <div class="settings-row">
+        <div class="settings-row-label">${copy.versionTitle}</div>
+        <div id="settings-version" class="settings-row-control">${escapeHtml(version)}</div>
+      </div>
     </div>
   `;
 }
@@ -1449,14 +1651,14 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
         }>${
           isPendingAction("manage-export-single")
             ? renderBusyLabel(copy.exportPending)
-            : renderIconLabel("icon-export.svg", copy.exportPet)
+            : copy.exportPet
         }</button>
         <button type="button" data-manage-menu="delete" ${
           popupViewState.pendingAction ? "disabled" : ""
         }>${
           isPendingAction("manage-delete-single")
             ? renderBusyLabel(copy.deletePending)
-            : renderIconLabel("icon-delete.svg", copy.deletePet)
+            : copy.deletePet
         }</button>
       </div>
     `
@@ -1466,10 +1668,12 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     <style>${popupStyles}</style>
     <div class="popup-shell">
       <div class="popup-header">
-        <div class="popup-title-group">
-          <img class="popup-logo" src="./assets/brand/openpet-logo-master.png" alt="OpenPet logo" />
-          <div class="popup-title">${copy.title}</div>
-        </div>
+        <a id="popup-title-link" class="popup-title-link" href="https://github.com/AwesomeHou/OpenPet" target="_blank" rel="noreferrer">
+          <div class="popup-title-group">
+            <img class="popup-logo" src="./assets/brand/openpet-logo-master.png" alt="OpenPet logo" />
+            <div class="popup-title">${copy.title}</div>
+          </div>
+        </a>
         ${
           popupViewState.page === "home"
             ? `<button id="settings-toggle" class="header-icon-button" type="button" aria-label="${copy.settingsTitle}">${renderIcon(
@@ -1596,15 +1800,24 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       if (action === "delete") {
         popupViewState.pendingAction = "manage-delete-single";
         renderPopup(root, snapshot);
-        await chrome.runtime.sendMessage({
-          type: messageTypes.deletePets,
-          payload: { petIds: [menuPetId] },
-        });
-        popupViewState.pendingAction = null;
-        popupViewState.manageContextMenu = null;
-        const nextSnapshot = await requestSnapshot();
-        clampManagePage(nextSnapshot);
-        showManageToast(root, nextSnapshot, translate(locale, "deletedFeedback", { count: "1" }));
+        try {
+          const result = (await chrome.runtime.sendMessage({
+            type: messageTypes.deletePets,
+            payload: { petIds: [menuPetId] },
+          })) as ActionResponse;
+          if (!result?.ok) {
+            throw new Error(getActionResponseError(result, "Delete failed"));
+          }
+          const nextSnapshot = await requestSnapshot();
+          popupViewState.pendingAction = null;
+          popupViewState.manageContextMenu = null;
+          clampManagePage(nextSnapshot);
+          showManageToast(root, nextSnapshot, translate(locale, "deletedFeedback", { count: "1" }));
+        } catch (error) {
+          popupViewState.pendingAction = null;
+          popupViewState.manageContextMenu = null;
+          showManageToast(root, snapshot, getErrorMessage(error, "Delete failed"));
+        }
       }
     });
     root.querySelector("#manage-batch-export")?.addEventListener("click", async () => {
@@ -1631,17 +1844,26 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
       }
       popupViewState.pendingAction = "manage-delete-batch";
       renderPopup(root, snapshot);
-      await chrome.runtime.sendMessage({
-        type: messageTypes.deletePets,
-        payload: { petIds },
-      });
-      popupViewState.pendingAction = null;
-      popupViewState.selectedPetIds.clear();
-      popupViewState.manageDeleteMode = false;
-      popupViewState.manageContextMenu = null;
-      const nextSnapshot = await requestSnapshot();
-      clampManagePage(nextSnapshot);
-      showManageToast(root, nextSnapshot, translate(locale, "deletedFeedback", { count: String(petIds.length) }));
+      try {
+        const result = (await chrome.runtime.sendMessage({
+          type: messageTypes.deletePets,
+          payload: { petIds },
+        })) as ActionResponse;
+        if (!result?.ok) {
+          throw new Error(getActionResponseError(result, "Delete failed"));
+        }
+        const nextSnapshot = await requestSnapshot();
+        popupViewState.pendingAction = null;
+        popupViewState.selectedPetIds.clear();
+        popupViewState.manageDeleteMode = false;
+        popupViewState.manageContextMenu = null;
+        clampManagePage(nextSnapshot);
+        showManageToast(root, nextSnapshot, translate(locale, "deletedFeedback", { count: String(petIds.length) }));
+      } catch (error) {
+        popupViewState.pendingAction = null;
+        popupViewState.manageContextMenu = null;
+        showManageToast(root, snapshot, getErrorMessage(error, "Delete failed"));
+      }
     });
     root.addEventListener("click", (event) => {
       if (!(event.target as HTMLElement | null)?.closest("#manage-context-menu")) {
@@ -1761,19 +1983,29 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
     const input = event.currentTarget as HTMLInputElement;
     popupViewState.pendingAction = "import-files";
     renderPopup(root, snapshot);
-    const payloadFiles = await Promise.all(Array.from(input.files ?? []).map((file) => encodeImportFile(file)));
-    await batchImportPayloadFiles(root, snapshot, payloadFiles);
-    popupViewState.pendingAction = null;
-    input.value = "";
+    try {
+      const payloadFiles = await Promise.all(Array.from(input.files ?? []).map((file) => encodeImportFile(file)));
+      await batchImportPayloadFiles(root, snapshot, payloadFiles);
+      popupViewState.pendingAction = null;
+    } catch (error) {
+      settleImportPreflightFailure(root, snapshot, error);
+    } finally {
+      input.value = "";
+    }
   });
   root.querySelector<HTMLInputElement>("#pet-folder")?.addEventListener("change", async (event) => {
     const input = event.currentTarget as HTMLInputElement;
     popupViewState.pendingAction = "import-folder";
     renderPopup(root, snapshot);
-    const { payloadFiles, preflightFailures } = await createFolderImportPayload(Array.from(input.files ?? []));
-    await batchImportPayloadFiles(root, snapshot, payloadFiles, preflightFailures);
-    popupViewState.pendingAction = null;
-    input.value = "";
+    try {
+      const { payloadFiles, preflightFailures } = await createFolderImportPayload(Array.from(input.files ?? []));
+      await batchImportPayloadFiles(root, snapshot, payloadFiles, preflightFailures);
+      popupViewState.pendingAction = null;
+    } catch (error) {
+      settleImportPreflightFailure(root, snapshot, error);
+    } finally {
+      input.value = "";
+    }
   });
 
   const dropzone = root.querySelector<HTMLElement>("#pet-dropzone");
@@ -1798,16 +2030,51 @@ function renderPopup(root: HTMLElement, snapshot: PopupSnapshot) {
   dropzone?.addEventListener("drop", async (event) => {
     event.preventDefault();
     setDragActive(false);
-    if (popupViewState.importMode !== "zip") {
-      return;
+    try {
+      if (popupViewState.importMode === "folder") {
+        popupViewState.pendingAction = "import-folder";
+        renderPopup(root, snapshot);
+        const droppedFiles = await extractFolderDropFiles(event.dataTransfer);
+        const { payloadFiles, preflightFailures } = await createFolderImportPayload(droppedFiles);
+        await batchImportPayloadFiles(root, snapshot, payloadFiles, preflightFailures);
+        popupViewState.pendingAction = null;
+        return;
+      }
+      popupViewState.pendingAction = "import-files";
+      renderPopup(root, snapshot);
+      const zipDropFailures = getZipDropPreflightFailures(event.dataTransfer, popupViewState.locale);
+      if (zipDropFailures.length) {
+        popupViewState.pendingAction = null;
+        popupViewState.feedbackMessage = buildImportFeedbackMessage(
+          popupViewState.locale,
+          { imported: 0, overwritten: 0, failed: zipDropFailures.length },
+          zipDropFailures
+        );
+        renderPopup(root, snapshot);
+        return;
+      }
+      const droppedFiles = Array.from(event.dataTransfer?.files ?? []);
+      if (!droppedFiles.length) {
+        popupViewState.pendingAction = null;
+        popupViewState.feedbackMessage = buildImportFeedbackMessage(
+          popupViewState.locale,
+          { imported: 0, overwritten: 0, failed: 1 },
+          [
+            {
+              filename: translate(popupViewState.locale, "importRequestFailureItem"),
+              error: translate(popupViewState.locale, "importZipOnlyFailure"),
+            },
+          ]
+        );
+        renderPopup(root, snapshot);
+        return;
+      }
+      const payloadFiles = await Promise.all(droppedFiles.map((file) => encodeImportFile(file)));
+      await batchImportPayloadFiles(root, snapshot, payloadFiles);
+      popupViewState.pendingAction = null;
+    } catch (error) {
+      settleImportPreflightFailure(root, snapshot, error);
     }
-    popupViewState.pendingAction = "import-files";
-    renderPopup(root, snapshot);
-    const payloadFiles = await Promise.all(
-      Array.from(event.dataTransfer?.files ?? []).map((file) => encodeImportFile(file))
-    );
-    await batchImportPayloadFiles(root, snapshot, payloadFiles);
-    popupViewState.pendingAction = null;
   });
 
   root.addEventListener("click", (event) => {

@@ -14,6 +14,34 @@ const defaultSnapshot = {
   animationSpeed: defaultAnimationSpeed,
 } as const;
 
+function createMockFileEntry(fullPath: string, file: File) {
+  return {
+    isFile: true as const,
+    isDirectory: false as const,
+    fullPath,
+    file: (callback: (nextFile: File) => void) => callback(file),
+  };
+}
+
+function createMockDirectoryEntry(fullPath: string, entries: Array<ReturnType<typeof createMockFileEntry>>) {
+  let served = false;
+  return {
+    isFile: false as const,
+    isDirectory: true as const,
+    fullPath,
+    createReader: () => ({
+      readEntries: (callback: (nextEntries: Array<ReturnType<typeof createMockFileEntry>>) => void) => {
+        if (served) {
+          callback([]);
+          return;
+        }
+        served = true;
+        callback(entries);
+      },
+    }),
+  };
+}
+
 function installChromeMock(options?: {
   locale?: string;
   storedLocale?: string;
@@ -36,6 +64,7 @@ function installChromeMock(options?: {
   const chromeMock = {
     runtime: {
       sendMessage,
+      getManifest: vi.fn(() => ({ version: "0.1.0" })),
     },
     storage: {
       local: {
@@ -75,7 +104,11 @@ describe("popup flow", () => {
     expect(root.querySelector("#status")).toBeNull();
     expect(root.textContent).toContain("宠物商店");
     expect(root.textContent).toContain("管理宠物");
+    expect(root.textContent).toContain("点击选择或拖入.zip文件");
     expect(root.textContent).toContain("未来可搭配 companion app 使用");
+
+    root.querySelector<HTMLButtonElement>("#import-mode-folder")?.click();
+    expect(root.textContent).toContain("点击选择或拖入文件夹");
   });
 
   test("allows switching locale and persists the selection across rerenders", async () => {
@@ -277,6 +310,32 @@ describe("popup flow", () => {
     });
   });
 
+  test("clears single-delete pending state when delete fails", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { petIds?: string[] } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      if (message.type === messageTypes.deletePets) {
+        throw new Error("Delete failed");
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "en-US", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#manage-pets")?.click();
+
+    const firstCard = root.querySelector('[data-manage-pet-id="boba"]') as HTMLElement;
+    firstCard.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 120, clientY: 120 }));
+    root.querySelector<HTMLButtonElement>('[data-manage-menu="delete"]')?.click();
+
+    await vi.waitFor(() => {
+      expect(root.querySelector("#manage-toast")?.textContent).toContain("Delete failed");
+      expect(root.textContent).not.toContain("Deleting...");
+    });
+  });
+
   test("shows manage-page success toast after single and batch export", async () => {
     const sendMessage = vi.fn(async (message: { type: string }) => {
       if (message.type === messageTypes.popupSnapshot) {
@@ -374,11 +433,79 @@ describe("popup flow", () => {
       expect(root.querySelector("#import-feedback")?.textContent).toContain("Imported 1");
       expect(root.querySelector("#import-feedback")?.textContent).toContain("Overwritten 1");
       expect(root.querySelector("#import-feedback")?.textContent).toContain("Failed 1");
-      expect(root.querySelector("#import-feedback")?.textContent).toContain("Error code");
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("broken.zip");
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("Invalid pet package");
     });
   });
 
-  test("supports folder import by treating each direct child directory as one pet package", async () => {
+  test("clears import pending state when the background import request fails", async () => {
+    const sendMessage = vi.fn(async (message: { type: string }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
+      if (message.type === messageTypes.batchImportPets) {
+        throw new Error("Import failed");
+      }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "en-US", sendMessage });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const dropzone = root.querySelector("#pet-dropzone") as HTMLElement;
+    const dragEvent = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
+    Object.defineProperty(dragEvent, "dataTransfer", {
+      value: { files: [new File(["zip"], "boba.zip", { type: "application/zip" })] },
+      configurable: true,
+    });
+
+    dropzone.dispatchEvent(dragEvent);
+
+    await vi.waitFor(() => {
+      const feedback = root.querySelector("#import-feedback")?.textContent ?? "";
+      expect(feedback).toContain("Imported 0");
+      expect(feedback).toContain("Failed 1");
+      expect(feedback).toContain("Import request");
+      expect(feedback).toContain("Import failed");
+      expect(root.textContent).not.toContain("Importing pets");
+    });
+  });
+
+  test("clears import pending state when ZIP preprocessing throws before background import", async () => {
+    installChromeMock({ locale: "en-US" });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const brokenZip = new File(["zip"], "broken.zip", { type: "application/zip" });
+    Object.defineProperty(brokenZip, "arrayBuffer", {
+      value: vi.fn(async () => {
+        throw new Error("Read failed");
+      }),
+      configurable: true,
+    });
+
+    const dropzone = root.querySelector("#pet-dropzone") as HTMLElement;
+    const dragEvent = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
+    Object.defineProperty(dragEvent, "dataTransfer", {
+      value: { files: [brokenZip] },
+      configurable: true,
+    });
+
+    dropzone.dispatchEvent(dragEvent);
+
+    await vi.waitFor(() => {
+      const feedback = root.querySelector("#import-feedback")?.textContent ?? "";
+      expect(feedback).toContain("Imported 0");
+      expect(feedback).toContain("Failed 1");
+      expect(feedback).toContain("Import request");
+      expect(feedback).toContain("Read failed");
+      expect(root.textContent).not.toContain("Importing pets");
+    });
+  });
+
+  test("supports batch import by dropping multiple pet folders in folder mode", async () => {
     const sendMessage = vi.fn(async (message: { type: string; payload?: { files?: Array<{ filename: string }> } }) => {
       if (message.type === messageTypes.popupSnapshot) {
         return defaultSnapshot;
@@ -386,12 +513,115 @@ describe("popup flow", () => {
       if (message.type === messageTypes.batchImportPets) {
         return {
           ok: true,
-          importedPetIds: ["deepseek", "doodlebob"],
+          importedPetIds: ["pet-a", "pet-b"],
           overwrittenPetIds: [],
           failures: [],
         };
       }
+      return { ok: true };
+    });
+    installChromeMock({ locale: "zh-CN", sendMessage });
 
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#import-mode-folder")?.click();
+
+    const petAJson = new File(['{"id":"pet-a","displayName":"Pet A","spritesheetPath":"spritesheet.webp"}'], "pet.json", {
+      type: "application/json",
+    });
+    const petASprite = new File(["A"], "spritesheet.webp", { type: "image/webp" });
+    const petBJson = new File(['{"id":"pet-b","displayName":"Pet B","spritesheetPath":"spritesheet.webp"}'], "pet.json", {
+      type: "application/json",
+    });
+    const petBSprite = new File(["B"], "spritesheet.webp", { type: "image/webp" });
+
+    const petAFolder = createMockDirectoryEntry("/pet-a", [
+      createMockFileEntry("/pet-a/pet.json", petAJson),
+      createMockFileEntry("/pet-a/spritesheet.webp", petASprite),
+    ]);
+    const petBFolder = createMockDirectoryEntry("/pet-b", [
+      createMockFileEntry("/pet-b/pet.json", petBJson),
+      createMockFileEntry("/pet-b/spritesheet.webp", petBSprite),
+    ]);
+
+    const dropzone = root.querySelector("#pet-dropzone") as HTMLElement;
+    const dragEvent = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
+    Object.defineProperty(dragEvent, "dataTransfer", {
+      value: {
+        items: [
+          { webkitGetAsEntry: () => petAFolder },
+          { webkitGetAsEntry: () => petBFolder },
+        ],
+      },
+      configurable: true,
+    });
+
+    dropzone.dispatchEvent(dragEvent);
+
+    await vi.waitFor(() => {
+      expect(sendMessage).toHaveBeenCalledWith({
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: expect.arrayContaining([
+            expect.objectContaining({ filename: "pet-a.zip" }),
+            expect.objectContaining({ filename: "pet-b.zip" }),
+          ]),
+        },
+      });
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("成功导入 2");
+    });
+  });
+
+  test("clears pending state when folders are dropped into ZIP mode", async () => {
+    installChromeMock({ locale: "zh-CN" });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+
+    const petFolder = createMockDirectoryEntry("/pet-a", [
+      createMockFileEntry(
+        "/pet-a/pet.json",
+        new File(['{"id":"pet-a","displayName":"Pet A","spritesheetPath":"spritesheet.webp"}'], "pet.json", {
+          type: "application/json",
+        })
+      ),
+    ]);
+    const secondPetFolder = createMockDirectoryEntry("/pet-b", [
+      createMockFileEntry(
+        "/pet-b/pet.json",
+        new File(['{"id":"pet-b","displayName":"Pet B","spritesheetPath":"spritesheet.webp"}'], "pet.json", {
+          type: "application/json",
+        })
+      ),
+    ]);
+
+    const dropzone = root.querySelector("#pet-dropzone") as HTMLElement;
+    const dragEvent = new Event("drop", { bubbles: true, cancelable: true }) as DragEvent;
+    Object.defineProperty(dragEvent, "dataTransfer", {
+      value: {
+        files: [],
+        items: [{ webkitGetAsEntry: () => petFolder }, { webkitGetAsEntry: () => secondPetFolder }],
+      },
+      configurable: true,
+    });
+
+    dropzone.dispatchEvent(dragEvent);
+
+    await vi.waitFor(() => {
+      const feedback = root.querySelector("#import-feedback")?.textContent ?? "";
+      expect(feedback).toContain("失败 2");
+      expect(feedback).toContain("pet-a");
+      expect(feedback).toContain("pet-b");
+      expect(feedback).toContain("ZIP 模式下仅支持拖入 .zip 文件");
+      expect(root.textContent).not.toContain("正在导入宠物");
+    });
+  });
+
+  test("does not batch import by treating a parent folder as direct child pet folders", async () => {
+    const sendMessage = vi.fn(async (message: { type: string; payload?: { files?: Array<{ filename: string }> } }) => {
+      if (message.type === messageTypes.popupSnapshot) {
+        return defaultSnapshot;
+      }
       return { ok: true };
     });
     installChromeMock({ locale: "zh-CN", sendMessage });
@@ -429,16 +659,10 @@ describe("popup flow", () => {
     folderInput.dispatchEvent(new Event("change", { bubbles: true }));
 
     await vi.waitFor(() => {
-      expect(sendMessage).toHaveBeenCalledWith({
-        type: messageTypes.batchImportPets,
-        payload: {
-          files: expect.arrayContaining([
-            expect.objectContaining({ filename: "deepseek.zip" }),
-            expect.objectContaining({ filename: "doodlebob.zip" }),
-          ]),
-        },
-      });
-      expect(root.querySelector("#import-feedback")?.textContent).toContain("成功导入 2");
+      expect(sendMessage).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: messageTypes.batchImportPets })
+      );
+      expect(root.querySelector("#import-feedback")?.textContent).toContain("E_FOLDER_INVALID_STRUCTURE");
     });
   });
 
@@ -526,6 +750,45 @@ describe("popup flow", () => {
         expect.objectContaining({ type: messageTypes.batchImportPets })
       );
       expect(root.querySelector("#import-feedback")?.textContent).toContain("E_FOLDER_INVALID_STRUCTURE");
+    });
+  });
+
+  test("counts each top-level zip as a separate failure in folder mode", async () => {
+    installChromeMock({ locale: "zh-CN" });
+
+    const root = document.getElementById("app")!;
+    await mountPopup(root);
+    root.querySelector<HTMLButtonElement>("#import-mode-folder")?.click();
+
+    const folderInput = root.querySelector("#pet-folder") as HTMLInputElement;
+    const bobaZip = new File(["zip"], "boba.zip", { type: "application/zip" });
+    Object.defineProperty(bobaZip, "webkitRelativePath", {
+      value: "压缩包/boba.zip",
+      configurable: true,
+    });
+    const geminiZip = new File(["zip"], "gemini.zip", { type: "application/zip" });
+    Object.defineProperty(geminiZip, "webkitRelativePath", {
+      value: "压缩包/gemini.zip",
+      configurable: true,
+    });
+    const chatgptZip = new File(["zip"], "chatgpt.zip", { type: "application/zip" });
+    Object.defineProperty(chatgptZip, "webkitRelativePath", {
+      value: "压缩包/chatgpt.zip",
+      configurable: true,
+    });
+    Object.defineProperty(folderInput, "files", {
+      value: [bobaZip, geminiZip, chatgptZip],
+      configurable: true,
+    });
+
+    folderInput.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      const feedback = root.querySelector("#import-feedback")?.textContent ?? "";
+      expect(feedback).toContain("失败 3");
+      expect(feedback).toContain("boba.zip");
+      expect(feedback).toContain("gemini.zip");
+      expect(feedback).toContain("chatgpt.zip");
     });
   });
 
@@ -654,9 +917,18 @@ describe("popup flow", () => {
     root.querySelector<HTMLButtonElement>("#settings-toggle")?.click();
 
     const issuesLink = root.querySelector<HTMLAnchorElement>("#github-issues-link");
+    const starLink = root.querySelector<HTMLAnchorElement>("#github-star-link");
+    const titleLink = root.querySelector<HTMLAnchorElement>("#popup-title-link");
     expect(issuesLink?.href).toBe("https://github.com/AwesomeHou/OpenPet/issues");
+    expect(starLink?.href).toBe("https://github.com/AwesomeHou/OpenPet");
+    expect(titleLink?.href).toBe("https://github.com/AwesomeHou/OpenPet");
     expect(root.textContent).toContain("Feedback");
     expect(root.textContent).toContain("GitHub Issues");
+    expect(root.textContent).toContain("Open Source");
+    expect(root.textContent).toContain("OpenPet");
+    expect(root.textContent).toContain("Version");
+    expect(root.textContent).toContain("0.1.0");
+    expect(root.textContent).toContain("Click to choose or drop .zip files");
     expect(root.querySelector(".popup-logo")).not.toBeNull();
     expect(root.querySelector("#settings-toggle img")).not.toBeNull();
     expect(root.querySelector("#pet-dropzone img")).not.toBeNull();

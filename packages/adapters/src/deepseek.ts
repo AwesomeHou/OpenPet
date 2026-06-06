@@ -33,8 +33,19 @@ export function findSendButton(doc: Document): HTMLButtonElement | null {
 }
 
 function findErrorText(doc: Document): boolean {
-  const bodyText = doc.body.textContent?.toLowerCase() ?? "";
-  return bodyText.includes("error") || bodyText.includes("错误");
+  const selectors = ["[role='alert']", "[aria-live='assertive']", "[data-error]", ".error"];
+  return selectors.some((selector) =>
+    Array.from(doc.querySelectorAll(selector)).some((node) => {
+      const text = node.textContent?.toLowerCase() ?? "";
+      return (
+        text.includes("something went wrong") ||
+        text.includes("request failed") ||
+        text.includes("发送失败") ||
+        text.includes("请求失败") ||
+        text.includes("错误")
+      );
+    })
+  );
 }
 
 function findAuthSurface(doc: Document): boolean {

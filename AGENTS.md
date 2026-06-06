@@ -35,6 +35,14 @@ If there is any conflict between notes, prefer the latest project overview in `s
 - Inspect the existing workspace before editing.
 - Use the smallest reasonable change that solves the task.
 - Prefer reusable, cross-platform structure when adding shared logic.
+- Treat `dist/` as the runtime artifact that Chrome actually loads, not as a source-of-truth editing location.
+- Run `npm run build` whenever a change affects extension runtime output, including:
+  - files under `apps/chrome-extension/src/`
+  - shared code under `packages/` that is consumed by the extension
+  - extension manifest or bundled assets that ship through `dist/`
+- Do not assume source edits are visible in Chrome after a reload unless `npm run build` has been run after those edits.
+- If the task only touches repo docs, planning notes, or test-only files that do not ship into the extension runtime, `npm run build` is not required.
+- Before handing off a UI or extension-behavior change as complete, make sure the latest source change has been rebuilt into `dist/`.
 - If the task touches the extension architecture, keep the separation between:
   - page/content listening
   - state normalization

@@ -431,6 +431,67 @@ describe("background message flow", () => {
     });
   });
 
+  test("returns an explicit error response when batch import publishing fails", async () => {
+    const tabsApi = {
+      sendMessage: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 8 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [],
+      sitePetBindings: {},
+      overlayVisible: true,
+    });
+    storageRepo.getSitePetVisibility.mockRejectedValueOnce(new Error("publish failed"));
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: new Map<number, TabPetState>([
+        [
+          8,
+          {
+            tabId: 8,
+            url: "https://gemini.google.com/app",
+            site: "gemini",
+            state: "idle",
+            updatedAt: 1,
+          },
+        ],
+      ]),
+    });
+    const sendResponse = vi.fn();
+
+    const zip = new JSZip();
+    zip.file(
+      "pet.json",
+      JSON.stringify({
+        id: "boba",
+        displayName: "Boba",
+        spritesheetPath: "spritesheet.webp",
+      })
+    );
+    zip.file("spritesheet.webp", new Uint8Array([65]));
+    const validZip = Array.from(await zip.generateAsync({ type: "uint8array" }));
+
+    handler(
+      {
+        type: messageTypes.batchImportPets,
+        payload: {
+          files: [{ filename: "boba.zip", bytes: validZip }],
+        },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({
+        ok: false,
+        error: "publish failed",
+      });
+    });
+  });
+
   test("updates site bindings and republishes the full scene", async () => {
     const sendMessage = vi.fn(async () => undefined);
     const tabsApi = {
@@ -697,6 +758,44 @@ describe("background message flow", () => {
           }),
         })
       );
+    });
+  });
+
+  test("returns an explicit error response when deleting pets fails", async () => {
+    const tabsApi = {
+      sendMessage: vi.fn(async () => undefined),
+      update: vi.fn(async () => undefined),
+      query: vi.fn(async () => [{ id: 7 }]),
+    };
+    const storageRepo = createStorageStub({
+      pets: [createPet("boba", "Boba")],
+      sitePetBindings: {
+        deepseek: "boba",
+      },
+      overlayVisible: true,
+    });
+    storageRepo.deletePets.mockRejectedValueOnce(new Error("delete failed"));
+    const handler = createMessageHandler({
+      storageRepo: storageRepo as never,
+      tabsApi: tabsApi as never,
+      tabStateMap: new Map<number, TabPetState>(),
+    });
+    const sendResponse = vi.fn();
+
+    handler(
+      {
+        type: messageTypes.deletePets,
+        payload: { petIds: ["boba"] },
+      },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+
+    await vi.waitFor(() => {
+      expect(sendResponse).toHaveBeenCalledWith({
+        ok: false,
+        error: "delete failed",
+      });
     });
   });
 

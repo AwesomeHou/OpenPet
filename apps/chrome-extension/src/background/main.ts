@@ -108,6 +108,14 @@ function createPopupPets(
   }));
 }
 
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.message) {
+    return error.message;
+  }
+
+  return fallback;
+}
+
 export async function publishScene(
   tabId: number,
   options: {
@@ -203,48 +211,60 @@ export function createMessageHandler(
     if (message.type === messageTypes.batchImportPets) {
       const batchMessage = message as BatchImportPetsMessage;
       void (async () => {
-        const existingPetIds = new Set((await storageRepo.getPets()).map((pet) => pet.id));
-        const importedPetIds: string[] = [];
-        const overwrittenPetIds: string[] = [];
-        const failures: Array<{ filename: string; code: PetImportErrorCode; error: string }> = [];
+        try {
+          const existingPetIds = new Set((await storageRepo.getPets()).map((pet) => pet.id));
+          const importedPetIds: string[] = [];
+          const overwrittenPetIds: string[] = [];
+          const failures: Array<{ filename: string; code: PetImportErrorCode; error: string }> = [];
 
-        for (const file of batchMessage.payload.files) {
-          try {
-            const pet = await importPetFromZip(Uint8Array.from(file.bytes));
-            await storageRepo.savePet(pet);
-            if (existingPetIds.has(pet.id)) {
-              overwrittenPetIds.push(pet.id);
-            } else {
-              importedPetIds.push(pet.id);
-              existingPetIds.add(pet.id);
+          for (const file of batchMessage.payload.files) {
+            try {
+              const pet = await importPetFromZip(Uint8Array.from(file.bytes));
+              await storageRepo.savePet(pet);
+              if (existingPetIds.has(pet.id)) {
+                overwrittenPetIds.push(pet.id);
+              } else {
+                importedPetIds.push(pet.id);
+                existingPetIds.add(pet.id);
+              }
+            } catch (error) {
+              const normalizedError = normalizePetImportError(error);
+              failures.push({
+                filename: file.filename,
+                code: normalizedError.code,
+                error: normalizedError.message,
+              });
             }
-          } catch (error) {
-            const normalizedError = normalizePetImportError(error);
-            failures.push({
-              filename: file.filename,
-              code: normalizedError.code,
-              error: normalizedError.message,
-            });
           }
-        }
 
-        await publishKnownTabs(storageRepo, tabsApi, stateMap);
-        sendResponse({
-          ok: true,
-          importedPetIds,
-          overwrittenPetIds,
-          failures,
-        });
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({
+            ok: true,
+            importedPetIds,
+            overwrittenPetIds,
+            failures,
+          });
+        } catch (error) {
+          sendResponse({
+            ok: false,
+            error: getErrorMessage(error, "Batch import failed"),
+          });
+        }
       })();
       return true;
     }
 
     if (message.type === messageTypes.setSitePetBinding) {
       const bindingMessage = message as SetSitePetBindingMessage;
-      void storageRepo.setSitePetBinding(bindingMessage.payload.siteId, bindingMessage.payload.petId).then(async () => {
-        await publishKnownTabs(storageRepo, tabsApi, stateMap);
-        sendResponse({ ok: true });
-      });
+      void storageRepo
+        .setSitePetBinding(bindingMessage.payload.siteId, bindingMessage.payload.petId)
+        .then(async () => {
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: getErrorMessage(error, "Failed to update site binding") });
+        });
       return true;
     }
 
@@ -254,10 +274,15 @@ export function createMessageHandler(
         minAnimationSpeed,
         Math.min(maxAnimationSpeed, animationMessage.payload.speed || defaultAnimationSpeed)
       );
-      void storageRepo.setAnimationSpeed(nextSpeed).then(async () => {
-        await publishKnownTabs(storageRepo, tabsApi, stateMap);
-        sendResponse({ ok: true, speed: nextSpeed });
-      });
+      void storageRepo
+        .setAnimationSpeed(nextSpeed)
+        .then(async () => {
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({ ok: true, speed: nextSpeed });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: getErrorMessage(error, "Failed to update animation speed") });
+        });
       return true;
     }
 
@@ -268,32 +293,50 @@ export function createMessageHandler(
         .then(async () => {
           await publishKnownTabs(storageRepo, tabsApi, stateMap);
           sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: getErrorMessage(error, "Failed to update site visibility") });
         });
       return true;
     }
 
     if (message.type === messageTypes.deletePets) {
       const deleteMessage = message as DeletePetsMessage;
-      void storageRepo.deletePets(deleteMessage.payload.petIds).then(async () => {
-        await publishKnownTabs(storageRepo, tabsApi, stateMap);
-        sendResponse({ ok: true });
-      });
+      void storageRepo
+        .deletePets(deleteMessage.payload.petIds)
+        .then(async () => {
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: getErrorMessage(error, "Failed to delete pets") });
+        });
       return true;
     }
 
     if (message.type === messageTypes.clearPets) {
-      void storageRepo.clearPets().then(async () => {
-        await publishKnownTabs(storageRepo, tabsApi, stateMap);
-        sendResponse({ ok: true });
-      });
+      void storageRepo
+        .clearPets()
+        .then(async () => {
+          await publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: getErrorMessage(error, "Failed to clear pets") });
+        });
       return true;
     }
 
     if (message.type === messageTypes.toggleOverlay) {
-      void storageRepo.setOverlayVisible(message.payload.visible).then(() => {
-        void publishKnownTabs(storageRepo, tabsApi, stateMap);
-        sendResponse({ ok: true });
-      });
+      void storageRepo
+        .setOverlayVisible(message.payload.visible)
+        .then(() => {
+          void publishKnownTabs(storageRepo, tabsApi, stateMap);
+          sendResponse({ ok: true });
+        })
+        .catch((error) => {
+          sendResponse({ ok: false, error: getErrorMessage(error, "Failed to update overlay visibility") });
+        });
       return true;
     }
 
@@ -304,26 +347,36 @@ export function createMessageHandler(
         storageRepo.getSitePetVisibility(),
         storageRepo.isOverlayVisible(),
         storageRepo.getAnimationSpeed(),
-      ]).then(([pets, sitePetBindings, sitePetVisibility, overlayVisible, animationSpeed]) => {
-        const snapshot: PopupSnapshotMessage["payload"] = {
-          pets: createPopupPets(pets, sitePetBindings),
-          sitePetBindings,
-          sitePetVisibility,
-          overlayVisible,
-          animationSpeed,
-        };
-        console.debug(
-          "[openpet-background] popupSnapshot",
-          JSON.stringify({
-            pets: snapshot.pets,
-            sitePetBindings: snapshot.sitePetBindings,
-            sitePetVisibility: snapshot.sitePetVisibility,
-            overlayVisible: snapshot.overlayVisible,
-            animationSpeed: snapshot.animationSpeed,
-          })
-        );
-        sendResponse(snapshot);
-      });
+      ])
+        .then(([pets, sitePetBindings, sitePetVisibility, overlayVisible, animationSpeed]) => {
+          const snapshot: PopupSnapshotMessage["payload"] = {
+            pets: createPopupPets(pets, sitePetBindings),
+            sitePetBindings,
+            sitePetVisibility,
+            overlayVisible,
+            animationSpeed,
+          };
+          console.debug(
+            "[openpet-background] popupSnapshot",
+            JSON.stringify({
+              pets: snapshot.pets,
+              sitePetBindings: snapshot.sitePetBindings,
+              sitePetVisibility: snapshot.sitePetVisibility,
+              overlayVisible: snapshot.overlayVisible,
+              animationSpeed: snapshot.animationSpeed,
+            })
+          );
+          sendResponse(snapshot);
+        })
+        .catch(() => {
+          sendResponse({
+            pets: [],
+            sitePetBindings: {},
+            sitePetVisibility: {},
+            overlayVisible: true,
+            animationSpeed: defaultAnimationSpeed,
+          } satisfies PopupSnapshotMessage["payload"]);
+        });
       return true;
     }
 

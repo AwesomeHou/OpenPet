@@ -9,6 +9,8 @@ type RuntimeTracker = {
   networkActive: boolean;
   settleTimer: number | null;
   idleResetTimer: number | null;
+  cycleSettled: boolean;
+  cooldownUntil: number;
 };
 
 const networkStartEvent = "openpet:network-start";
@@ -22,12 +24,25 @@ function createRuntimeTracker(): RuntimeTracker {
     networkActive: false,
     settleTimer: null,
     idleResetTimer: null,
+    cycleSettled: false,
+    cooldownUntil: 0,
   };
 }
 
-function markSendTriggered(runtime: RuntimeTracker): void {
-  runtime.sendTriggeredAt = Date.now();
+function openSendCycle(runtime: RuntimeTracker, source: "user" | "network"): void {
+  const now = Date.now();
+  if (runtime.sendTriggeredAt !== null) {
+    return;
+  }
+
+  if (source === "network" && now < runtime.cooldownUntil) {
+    return;
+  }
+
+  runtime.sendTriggeredAt = now;
   runtime.lastRelevantMutationAt = null;
+  runtime.cycleSettled = false;
+  runtime.cooldownUntil = 0;
 }
 
 function clearScheduledTransitions(runtime: RuntimeTracker, view: Window): void {
@@ -139,6 +154,9 @@ export function publishSignals(
     responseGrowing,
     settled,
   };
+  if (signals.settled) {
+    runtime.cycleSettled = true;
+  }
   console.debug("[openpet-content] publishSignals", JSON.stringify(signals));
 
   const message: OpenPetMessage = {
@@ -233,6 +251,8 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
 
       runtime.sendTriggeredAt = null;
       runtime.lastRelevantMutationAt = null;
+      runtime.cycleSettled = false;
+      runtime.cooldownUntil = Date.now() + 1500;
       queuePublish();
     }, 2800);
   };
@@ -241,7 +261,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     "click",
     (event) => {
       if (isSendTriggerTarget(adapter, doc, event.target)) {
-        markSendTriggered(runtime);
+        openSendCycle(runtime, "user");
         scheduleStateTransitions();
         queuePublish();
       }
@@ -253,7 +273,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
     "keydown",
     (event) => {
       if (event.key === "Enter" && !event.shiftKey && isComposerTarget(adapter, doc, event.target)) {
-        markSendTriggered(runtime);
+        openSendCycle(runtime, "user");
         scheduleStateTransitions();
         queuePublish();
       }
@@ -280,7 +300,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
 
   view.addEventListener(networkStartEvent, () => {
     runtime.networkActive = true;
-    markSendTriggered(runtime);
+    openSendCycle(runtime, "network");
     runtime.lastRelevantMutationAt = Date.now();
     scheduleStateTransitions();
     queuePublish();
@@ -304,7 +324,7 @@ export function bootstrapContentScript(doc: Document = document): MutationObserv
       return;
     }
 
-    if (runtime.sendTriggeredAt !== null) {
+    if (runtime.sendTriggeredAt !== null && !runtime.cycleSettled) {
       runtime.lastRelevantMutationAt = Date.now();
       scheduleStateTransitions();
     }

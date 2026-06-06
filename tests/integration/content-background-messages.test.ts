@@ -110,4 +110,64 @@ describe("content and overlay flow", () => {
 
     expect(getOverlayRoot()?.textContent).toContain("waiting");
   });
+
+  test("does not reopen a second send cycle from duplicate trigger signals", async () => {
+    const sendMessage = vi.fn(async () => undefined);
+    vi.stubGlobal("chrome", {
+      runtime: {
+        sendMessage,
+        onMessage: {
+          addListener: vi.fn(),
+        },
+      },
+    });
+    const dom = new JSDOM(
+      `<div contenteditable="true" id="composer"></div><button aria-label="Send message">Send</button><main id="messages"></main>`,
+      {
+        url: "https://gemini.google.com/app",
+      }
+    );
+    Object.defineProperty(dom.window.document, "readyState", {
+      value: "complete",
+      configurable: true,
+    });
+
+    const observer = bootstrapContentScript(dom.window.document);
+    sendMessage.mockClear();
+
+    const sendButton = dom.window.document.querySelector("button") as HTMLButtonElement;
+    sendButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    await Promise.resolve();
+    dom.window.dispatchEvent(new dom.window.CustomEvent("openpet:network-start"));
+    await Promise.resolve();
+    dom.window.document.querySelector("#messages")?.appendChild(dom.window.document.createElement("div"));
+    await Promise.resolve();
+    dom.window.dispatchEvent(new dom.window.CustomEvent("openpet:network-end"));
+    await Promise.resolve();
+
+    vi.advanceTimersByTime(1700);
+    await Promise.resolve();
+    await vi.waitFor(() => {
+      const statePayloads = sendMessage.mock.calls
+        .map(([message]) => message)
+        .filter((message: { type: string }) => message.type === messageTypes.pageSignals)
+        .map((message: { payload: { sendTriggered: boolean; responseGrowing: boolean; settled: boolean } }) => message.payload);
+
+      const settledStates = statePayloads.filter((payload) => payload.settled);
+      expect(settledStates).toHaveLength(1);
+    });
+
+    dom.window.document.querySelector("#messages")?.appendChild(dom.window.document.createElement("div"));
+    await Promise.resolve();
+    vi.advanceTimersByTime(1700);
+    await Promise.resolve();
+
+    const statePayloads = sendMessage.mock.calls
+      .map(([message]) => message)
+      .filter((message: { type: string }) => message.type === messageTypes.pageSignals)
+      .map((message: { payload: { sendTriggered: boolean; responseGrowing: boolean; settled: boolean } }) => message.payload);
+    expect(statePayloads.filter((payload) => payload.settled)).toHaveLength(1);
+
+    observer.disconnect();
+  });
 });
