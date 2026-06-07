@@ -9,11 +9,11 @@
 </p>
 
 <p align="center">
-  <strong>用于 AI 聊天站点的本地优先宠物浮层扩展</strong>
+  <strong>面向网页 AI 工具的动画伙伴</strong>
 </p>
 
 <p align="center">
-  OpenPet 是一个浏览器扩展，用于在支持的 AI 聊天站点中叠加宠物浮层、管理宠物绑定，并帮助你快速回到当前会话标签页。
+  OpenPet 是一个浏览器扩展，用于在支持的 AI 聊天站点中展示动画伙伴、管理站点绑定，并帮助你快速回到当前会话标签页。
 </p>
 
 <p align="center">
@@ -88,11 +88,11 @@ OpenPet 使用与 Codex pets 兼容的宠物包格式。一个宠物通常包含
 
 ## 如何制作宠物
 
-如果你想自己制作 OpenPet 宠物，推荐使用 Codex 的 `hatch-pet` skill：
+如果你想自己制作 OpenPet 宠物，推荐使用 Codex 的 `hatch-pet` 技能：
 
 1. 准备角色设定、品牌线索或参考图。
-2. 使用 `hatch-pet` skill 生成基础宠物和各动作帧。
-3. 通过 skill 自带的校验与 contact sheet 检查动画一致性。
+2. 使用 `hatch-pet` 技能生成基础宠物和各动作帧。
+3. 通过技能自带的校验与联系表检查动画一致性。
 4. 导出得到 `pet.json` 和 `spritesheet.webp`。
 5. 将宠物包导入 OpenPet，即可在支持站点中使用。
 
@@ -120,9 +120,9 @@ OpenPet 计划通过以下渠道发布：
 OpenPet 当前请求以下权限：
 
 - `storage`：用于保存宠物、绑定、设置和缓存状态
-- `unlimitedStorage`：用于降低导入较大宠物资产时触发本地配额失败的概率
+- `unlimitedStorage`：用于降低导入较大宠物资源时触发本地配额失败的概率
 - `tabs`：用于点击宠物后聚焦到正确的会话标签页
-- 受支持站点的 host access：用于检测页面状态并渲染浮层
+- 受支持站点的页面访问权限：用于检测页面状态并渲染浮层
 
 这些权限只用于扩展本体的本地工作流，不意味着 OpenPet 会把你的聊天内容上传到它自己的服务端。
 
@@ -161,7 +161,7 @@ openpet/
 
 - `assets/` - 仓库级品牌与共享图片资源
 - `apps/chrome-extension/` - 扩展源码
-- `packages/` - 共享逻辑与宠物资产工具
+- `packages/` - 共享逻辑与宠物资源工具
 - `scripts/` - 构建与辅助脚本
 - `dist/` - 浏览器实际加载的构建产物
 - `scratch/` - 发布文案、说明草稿和规划记录

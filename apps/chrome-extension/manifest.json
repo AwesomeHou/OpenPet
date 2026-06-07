@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "OpenPet",
   "version": "0.1.0",
-  "description": "A local-first pet status system for AI chat workflows.",
+  "description": "Animated companions for web AI tools.",
   "permissions": ["storage", "unlimitedStorage", "tabs"],
   "host_permissions": ["https://chat.deepseek.com/*", "https://*/*", "http://*/*"],
   "icons": {

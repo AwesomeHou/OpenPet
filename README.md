@@ -4,9 +4,9 @@
 [![docs英文](https://img.shields.io/badge/docs-English-blue)](README.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-OpenPet is a local-first pet status system for AI chat workflows.
+OpenPet is an animated companions project for web AI tools.
 
-It starts as a Chrome extension that watches supported AI chat pages, shows a pet overlay, and lets you jump back to the right conversation tab with one click.
+It starts as a browser extension that shows animated companions on supported AI chat pages, manages per-site bindings, and lets you jump back to the right conversation tab with one click.
 
 ## Highlights
 

@@ -5,6 +5,7 @@ import { build } from "esbuild";
 const root = process.cwd();
 const distDir = path.join(root, "dist");
 const assetsDir = path.join(distDir, "assets");
+const builtinPetsDir = path.join(root, "apps/chrome-extension/assets/builtin-pets");
 
 await fs.rm(distDir, { recursive: true, force: true });
 await fs.mkdir(assetsDir, { recursive: true });
@@ -52,7 +53,18 @@ await fs.copyFile(
 await fs.cp(
   path.join(root, "apps/chrome-extension/assets"),
   path.join(distDir, "assets"),
-  { recursive: true }
+  {
+    recursive: true,
+    filter(source) {
+      const relativeSource = path.relative(builtinPetsDir, source);
+      const isBuiltinPetZip =
+        relativeSource !== "" &&
+        !relativeSource.startsWith("..") &&
+        path.extname(source).toLowerCase() === ".zip";
+
+      return !isBuiltinPetZip;
+    },
+  }
 );
 await fs.cp(
   path.join(root, "assets/icons/ui"),

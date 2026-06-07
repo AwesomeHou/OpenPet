@@ -1,6 +1,31 @@
 import { describe, expect, test } from "vitest";
 import JSZip from "jszip";
-import { importPetFromZip } from "@openpet/pet-assets/importPet";
+import { importPetFromDirectory, importPetFromZip } from "@openpet/pet-assets/importPet";
+
+describe("importPetFromDirectory", () => {
+  test("imports an unpacked pet folder payload", async () => {
+    const pet = await importPetFromDirectory([
+      {
+        path: "pet.json",
+        bytes: new TextEncoder().encode(
+          JSON.stringify({
+            id: "boba",
+            displayName: "Boba",
+            spritesheetPath: "spritesheet.webp",
+          })
+        ),
+      },
+      {
+        path: "spritesheet.webp",
+        bytes: new Uint8Array([1, 2, 3, 4]),
+      },
+    ]);
+
+    expect(pet.id).toBe("boba");
+    expect(pet.displayName).toBe("Boba");
+    expect(pet.spritesheetDataUrl.startsWith("data:image/webp;base64,")).toBe(true);
+  });
+});
 
 describe("importPetFromZip", () => {
   test("imports the bundled boba fixture", async () => {

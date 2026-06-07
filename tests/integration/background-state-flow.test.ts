@@ -3,6 +3,7 @@ import { createMessageHandler, ensureBuiltinPetsSeeded } from "../../apps/chrome
 import { messageTypes } from "@openpet/shared/messages";
 import type { SiteId, StoredPetRecord, TabPetState } from "@openpet/shared/types";
 import JSZip from "jszip";
+import type { BuiltinPetFile } from "../../apps/chrome-extension/src/background/builtinPets";
 
 function createPet(id: string, displayName: string): StoredPetRecord {
   return {
@@ -105,6 +106,25 @@ async function createValidZipBytes(id: string, displayName: string): Promise<num
   return Array.from(await zip.generateAsync({ type: "uint8array" }));
 }
 
+function createBuiltinPetFiles(id: string, displayName: string): BuiltinPetFile[] {
+  return [
+    {
+      path: "pet.json",
+      bytes: new TextEncoder().encode(
+        JSON.stringify({
+          id,
+          displayName,
+          spritesheetPath: "spritesheet.webp",
+        })
+      ),
+    },
+    {
+      path: "spritesheet.webp",
+      bytes: new Uint8Array([65, 66, 67]),
+    },
+  ];
+}
+
 describe("builtin pet seeding", () => {
   test("seeds builtin pets and default bindings on first install only", async () => {
     const storageRepo = createStorageStub({
@@ -113,16 +133,16 @@ describe("builtin pet seeding", () => {
       sitePetVisibility: {},
       builtinPetsSeedVersion: null,
     });
-    const archiveBytesByPetId = {
-      chatgpt: await createValidZipBytes("chatgpt", "ChatGPT"),
-      deepseek: await createValidZipBytes("deepseek", "DeepSeek"),
-      doubao: await createValidZipBytes("doubao", "Doubao"),
-      gemini: await createValidZipBytes("gemini", "Gemini"),
-    } satisfies Record<SiteId, number[]>;
-    const loadArchive = vi.fn(async (petId: SiteId) => archiveBytesByPetId[petId]);
+    const filesByPetId = {
+      chatgpt: createBuiltinPetFiles("chatgpt", "ChatGPT"),
+      deepseek: createBuiltinPetFiles("deepseek", "DeepSeek"),
+      doubao: createBuiltinPetFiles("doubao", "Doubao"),
+      gemini: createBuiltinPetFiles("gemini", "Gemini"),
+    } satisfies Record<SiteId, BuiltinPetFile[]>;
+    const loadFiles = vi.fn(async (petId: SiteId) => filesByPetId[petId]);
 
     await ensureBuiltinPetsSeeded(storageRepo as never, {
-      loadArchive,
+      loadFiles,
       reason: "install",
     });
 
@@ -133,7 +153,7 @@ describe("builtin pet seeding", () => {
     expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("doubao", "doubao");
     expect(storageRepo.setSitePetBinding).toHaveBeenCalledWith("gemini", "gemini");
     expect(storageRepo.setBuiltinPetsSeedVersion).toHaveBeenCalledWith("v1");
-    expect(loadArchive).toHaveBeenCalledTimes(4);
+    expect(loadFiles).toHaveBeenCalledTimes(4);
   });
 
   test("does not reseed or overwrite user bindings after initialization has already run", async () => {
@@ -145,38 +165,38 @@ describe("builtin pet seeding", () => {
       },
       builtinPetsSeedVersion: "v1",
     });
-    const loadArchive = vi.fn(async () => {
-      throw new Error("should not load archive when already seeded");
+    const loadFiles = vi.fn(async () => {
+      throw new Error("should not load files when already seeded");
     });
 
     await ensureBuiltinPetsSeeded(storageRepo as never, {
-      loadArchive,
+      loadFiles,
       reason: "install",
     });
 
     expect(storageRepo.savePet).not.toHaveBeenCalled();
     expect(storageRepo.setSitePetBinding).not.toHaveBeenCalled();
     expect(storageRepo.setBuiltinPetsSeedVersion).not.toHaveBeenCalled();
-    expect(loadArchive).not.toHaveBeenCalled();
+    expect(loadFiles).not.toHaveBeenCalled();
   });
 
   test("does not seed builtin pets during extension update", async () => {
     const storageRepo = createStorageStub({
       builtinPetsSeedVersion: null,
     });
-    const loadArchive = vi.fn(async () => {
-      throw new Error("should not load archive during update");
+    const loadFiles = vi.fn(async () => {
+      throw new Error("should not load files during update");
     });
 
     await ensureBuiltinPetsSeeded(storageRepo as never, {
-      loadArchive,
+      loadFiles,
       reason: "update",
     });
 
     expect(storageRepo.savePet).not.toHaveBeenCalled();
     expect(storageRepo.setSitePetBinding).not.toHaveBeenCalled();
     expect(storageRepo.setBuiltinPetsSeedVersion).not.toHaveBeenCalled();
-    expect(loadArchive).not.toHaveBeenCalled();
+    expect(loadFiles).not.toHaveBeenCalled();
   });
 });
 
