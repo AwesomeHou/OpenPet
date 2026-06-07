@@ -1,64 +1,54 @@
-# OpenPet
+# <img src="assets/brand/openpet-logo-master.png" alt="OpenPet logo" width="36" /> OpenPet：面向网页 AI 工具的动画伙伴
 
 [![docs中文](https://img.shields.io/badge/docs-中文-blue)](README.zh-CN.md)
 [![docs英文](https://img.shields.io/badge/docs-English-blue)](README.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-<p align="center">
-  <img src="assets/brand/openpet-logo-master.png" alt="OpenPet logo" width="220" />
-</p>
-
-<p align="center">
-  <strong>面向网页 AI 工具的动画伙伴</strong>
-</p>
-
-<p align="center">
-  OpenPet 是一个浏览器扩展，用于在支持的 AI 聊天站点中展示动画伙伴、管理站点绑定，并帮助你快速回到当前会话标签页。
-</p>
-
-<p align="center">
-  本地优先 · 无云账号 · 首装预装官方宠物 · 支持多宠物与多站点绑定
-</p>
+OpenPet 是一款浏览器扩展，为支持的 AI 聊天站点提供动画伙伴展示、站点绑定管理，以及快速回到当前会话标签页的能力。
+它采用本地优先设计，宠物资产、绑定和界面偏好都保存在浏览器本地，适合长期使用和多站点管理。
 
 ## 快速导航
 
-- [特性](#特性)
-- [快速开始](#快速开始)
+- [核心能力](#核心能力)
+- [安装方式](#安装方式)
+- [使用流程](#使用流程)
 - [支持站点](#支持站点)
 - [浏览器兼容](#浏览器兼容)
 - [宠物格式](#宠物格式)
 - [如何制作宠物](#如何制作宠物)
-- [发布渠道](#发布渠道)
 - [权限说明](#权限说明)
 - [隐私](#隐私)
 - [项目结构](#项目结构)
-- [进一步了解](#进一步了解)
 - [许可证](#许可证)
 
-## 特性
+## 核心能力
 
-- 本地优先运行，不依赖云账号
+- 在支持的 AI 聊天站点中展示动画伙伴
 - 支持从本地 `.zip` 文件或文件夹导入宠物包
 - 首次安装会自动预装官方宠物
 - 支持多宠物管理与按站点绑定
-- 支持 `deepseek`、`doubao`、`chatgpt`、`gemini`
-- 宠物资产、绑定和界面偏好都保存在浏览器本地
+- 支持 `DeepSeek`、`Doubao`、`ChatGPT`、`Gemini`
+- 宠物资产、站点绑定和界面偏好都保存在浏览器本地
 
-## 快速开始
+## 安装方式
 
-1. 安装依赖：
+选择一个适合你的渠道安装 OpenPet：
 
-```bash
-npm install
-```
+| 渠道 | 适合场景 |
+| --- | --- |
+| GitHub Releases | 获取最新发布包、离线安装、归档版本 |
+| Chrome Web Store | Chrome 用户一键安装 |
+| Edge Add-ons | Edge 用户一键安装 |
 
-2. 构建扩展：
+如果你从 GitHub Releases 安装，通常需要下载发布包并在浏览器中加载解压后的扩展目录；如果从应用商店安装，直接点击安装即可。
 
-```bash
-npm run build
-```
+## 使用流程
 
-3. 在 Chrome 或 Edge 中加载 `dist/` 目录作为未打包扩展。
+1. 安装 OpenPet 并在浏览器中固定扩展入口。
+2. 打开支持的 AI 聊天站点，例如 DeepSeek、Doubao、ChatGPT 或 Gemini。
+3. 在扩展中导入宠物包，或使用首次安装预装的官方宠物。
+4. 为站点绑定宠物，并在宠物管理视图中调整你的站点配置。
+5. 回到会话页面，宠物会随站点状态展示在支持页面中。
 
 ## 支持站点
 
@@ -82,7 +72,7 @@ OpenPet 基于 Chrome 扩展 Manifest V3 开发，因此可以在以下桌面浏
 OpenPet 使用与 Codex pets 兼容的宠物包格式。一个宠物通常包含两部分：
 
 - `pet.json`：宠物元数据，包含 `id`、`displayName`、`description` 和 `spritesheetPath`
-- `spritesheet.webp`：宠物动画精灵图
+- `spritesheet.webp`：宠物动画精灵图。当前文档按 Codex pet 风格将其视为一张动作图集，atlas 行 `0~8` 共 9 行，分别对应 `idle`、`running-right`、`running-left`、`waving`、`jumping`、`failed`、`waiting`、`running`、`review`。
 
 你导入到 OpenPet 的宠物包，本质上就是一个包含上述文件的本地宠物资源包。
 
@@ -97,23 +87,6 @@ OpenPet 使用与 Codex pets 兼容的宠物包格式。一个宠物通常包含
 5. 将宠物包导入 OpenPet，即可在支持站点中使用。
 
 如果你已有其他来源的宠物资产，也可以整理成 `pet.json + spritesheet.webp` 的结构再导入。
-
-## 为什么值得安装
-
-- 你可以在常用的 AI 会话页面上看到一个持续存在的宠物浮层
-- 你可以给不同站点绑定不同宠物，避免所有页面都长得一样
-- 你可以直接导入自己的宠物资产，而不是只能使用内置内容
-- 你可以在首次安装时直接看到官方预装宠物，不必先完成导入
-
-## 发布渠道
-
-OpenPet 计划通过以下渠道发布：
-
-- GitHub Releases
-- Chrome Web Store
-- Edge Add-ons
-
-这三个渠道会尽量保持同一套版本号、同一套构建产物和同一套说明文案。
 
 ## 权限说明
 
@@ -139,39 +112,23 @@ OpenPet 以本地存储为优先。
 - 中文版：[`scratch/openpet-privacy-policy.zh-CN.md`](scratch/openpet-privacy-policy.zh-CN.md)
 - 英文版：[`scratch/openpet-privacy-policy.en.md`](scratch/openpet-privacy-policy.en.md)
 
-如果某个平台只允许提交一个隐私链接，建议使用一个中英双语的正式隐私页。
-
 ## 项目结构
 
 ```txt
 openpet/
-  assets/
-    brand/
-    icons/
-  apps/
-    chrome-extension/
-  packages/
-  scripts/
-  dist/
-  scratch/
-  README.md
-  README.zh-CN.md
-  LICENSE
+  assets/                      # 仓库级品牌与共享图片资源
+    brand/                     # 品牌素材，如 Logo、横幅等
+    icons/                     # 图标资源
+  apps/                        # 应用入口目录
+    chrome-extension/          # 浏览器扩展源码
+  packages/                    # 共享逻辑与宠物资源工具
+  scripts/                     # 构建与辅助脚本
+  dist/                        # 浏览器实际加载的构建产物
+  scratch/                     # 发布文案、说明草稿和规划记录
+  README.md                    # 英文版文档
+  README.zh-CN.md              # 中文版文档
+  LICENSE                      # 开源许可证
 ```
-
-- `assets/` - 仓库级品牌与共享图片资源
-- `apps/chrome-extension/` - 扩展源码
-- `packages/` - 共享逻辑与宠物资源工具
-- `scripts/` - 构建与辅助脚本
-- `dist/` - 浏览器实际加载的构建产物
-- `scratch/` - 发布文案、说明草稿和规划记录
-
-## 进一步了解
-
-- 英文版文档：[`README.md`](README.md)
-- 中文隐私政策草稿：[`scratch/openpet-privacy-policy.zh-CN.md`](scratch/openpet-privacy-policy.zh-CN.md)
-- 英文隐私政策草稿：[`scratch/openpet-privacy-policy.en.md`](scratch/openpet-privacy-policy.en.md)
-- 发布与上架资料：[`scratch/openpet-store-and-release-pack.md`](scratch/openpet-store-and-release-pack.md)
 
 ## 许可证
 
