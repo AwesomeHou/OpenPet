@@ -61,9 +61,16 @@ export function isDoubaoResponseInProgress(doc: Document): boolean {
       .toLowerCase();
     return (
       label.includes("stop") ||
+      label.includes("停止生成") ||
+      label.includes("停止回复") ||
+      label.includes("结束生成") ||
+      label.includes("生成中") ||
+      label.includes("正在生成") ||
       label.includes("停止") ||
       label.includes("中止") ||
-      label.includes("generating")
+      label.includes("generating") ||
+      label.includes("loading") ||
+      label.includes("processing")
     );
   });
 }
@@ -104,13 +111,17 @@ export function collectDoubaoSignals(
   doc: Document,
   previous?: Partial<RawPageSignals>
 ): RawPageSignals {
+  const responseGrowing = Array.from(doc.querySelectorAll("[data-openpet-streaming='true']")).length > 0;
   return {
     site: "doubao",
     composerReady: Boolean(findDoubaoComposer(doc)),
     sendTriggered: previous?.sendTriggered ?? false,
-    responseGrowing: Array.from(doc.querySelectorAll("[data-openpet-streaming='true']")).length > 0,
+    responseGrowing,
     errorVisible: findDoubaoErrorText(doc),
-    settled: Array.from(doc.querySelectorAll("[data-openpet-settled='true']")).length > 0,
+    settled:
+      Array.from(doc.querySelectorAll("[data-openpet-settled='true']")).length > 0 &&
+      !responseGrowing &&
+      !isDoubaoResponseInProgress(doc),
     tabActive: doc.visibilityState === "visible",
     timestamp: Date.now(),
   };

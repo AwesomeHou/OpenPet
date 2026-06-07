@@ -108,4 +108,22 @@ describe("site adapters", () => {
     expect(detectDoubaoPage(doubaoDom.window.document)).toBe(true);
     expect(signals.errorVisible).toBe(true);
   });
+
+  test("keeps Doubao in progress while the stop-generating button is present", () => {
+    const dom = new JSDOM(
+      `<textarea placeholder="发消息..."></textarea>
+       <main>
+         <button class="send-msg-btn generating" title="Stop generating">停止生成</button>
+         <div data-openpet-streaming="true"></div>
+       </main>`,
+      {
+        url: "https://www.doubao.com/chat/",
+      }
+    );
+
+    const signals = collectDoubaoSignals(dom.window.document, { sendTriggered: true });
+    expect(signals.responseGrowing).toBe(true);
+    expect(signals.settled).toBe(false);
+    expect(signals.sendTriggered).toBe(true);
+  });
 });
