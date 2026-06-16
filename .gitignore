@@ -1,0 +1,39 @@
+.workbuddy/
+
+# Temporary working files
+scratch/
+
+# Local repo guidance
+AGENT.md
+
+# Dependency caches
+node_modules/
+.pnpm-store/
+.npm/
+yarn-error.log*
+pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+.tmp/
+test-results/
+playwright-user-data/
+playwright-dom-check/
+playwright-live-inspect/
+playwright-live-sanity/
+playwright-live-verify/
+
+# Editor / OS files
+.DS_Store
+Thumbs.db
+Desktop.ini
+.vscode/
+.idea/
+
+# Environment files
+.env
+.env.*

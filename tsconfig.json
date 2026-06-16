@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "noEmit": true,
+    "lib": ["ES2022", "DOM"],
+    "types": ["node", "chrome", "vitest/globals"],
+    "paths": {
+      "@openpet/adapters": ["./packages/adapters/src/index.ts"],
+      "@openpet/shared/*": ["./packages/shared/src/*"],
+      "@openpet/state/*": ["./packages/state/src/*"],
+      "@openpet/pet-assets/*": ["./packages/pet-assets/src/*"],
+      "@openpet/adapters/*": ["./packages/adapters/src/*"]
+    }
+  },
+  "include": ["apps/**/*.ts", "packages/**/*.ts", "tests/**/*.ts", "scripts/**/*.mjs"]
+}

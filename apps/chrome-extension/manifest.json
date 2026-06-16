@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "OpenPet",
+  "version": "0.1.0",
+  "description": "Animated companions for web AI tools.",
+  "permissions": ["storage", "unlimitedStorage", "tabs"],
+  "host_permissions": ["https://chat.deepseek.com/*", "https://*/*", "http://*/*"],
+  "icons": {
+    "16": "assets/icons/openpet-16.png",
+    "32": "assets/icons/openpet-32.png",
+    "48": "assets/icons/openpet-48.png",
+    "128": "assets/icons/openpet-128.png"
+  },
+  "background": {
+    "service_worker": "assets/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "assets/icons/openpet-16.png",
+      "32": "assets/icons/openpet-32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://*/*", "http://*/*"],
+      "js": ["assets/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
