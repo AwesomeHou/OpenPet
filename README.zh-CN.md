@@ -4,6 +4,8 @@
 [![docs英文](https://img.shields.io/badge/docs-English-blue)](README.md)
 [![license](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
+![OpenPet 总体效果](assets/screenshots/openpet-overview.png)
+
 OpenPet 是一款浏览器扩展，为支持的 AI 聊天站点提供动画伙伴展示、站点绑定管理，以及快速回到当前会话标签页的能力。
 它采用本地优先设计，宠物资产、绑定和界面偏好都保存在浏览器本地，适合长期使用和多站点管理。
 
@@ -14,8 +16,7 @@ OpenPet 是一款浏览器扩展，为支持的 AI 聊天站点提供动画伙�
 - [使用流程](#使用流程)
 - [支持站点](#支持站点)
 - [浏览器兼容](#浏览器兼容)
-- [宠物格式](#宠物格式)
-- [如何制作宠物](#如何制作宠物)
+- [宠物](#宠物)
 - [权限说明](#权限说明)
 - [隐私](#隐私)
 - [项目结构](#项目结构)
@@ -34,11 +35,11 @@ OpenPet 是一款浏览器扩展，为支持的 AI 聊天站点提供动画伙�
 
 选择一个适合你的渠道安装 OpenPet：
 
-| 渠道 | 适合场景 |
+| 发布渠道 | 适合场景 |
 | --- | --- |
-| GitHub Releases | 获取最新发布包、离线安装、归档版本 |
-| Chrome Web Store | Chrome 用户一键安装 |
-| Edge Add-ons | Edge 用户一键安装 |
+| [GitHub Releases](https://github.com/AwesomeHou/OpenPet/releases) | 获取最新发布包、离线安装、归档版本 |
+| Chrome Web Store（暂未发布） |  |
+| [Edge Add-ons](https://microsoftedge.microsoft.com/addons/detail/openpet/coknmkebdekgpiianinblcaldibfnepk) | Edge 用户一键安装 |
 
 如果你从 GitHub Releases 安装，通常需要下载发布包并在浏览器中加载解压后的扩展目录；如果从应用商店安装，直接点击安装即可。
 
@@ -67,16 +68,22 @@ OpenPet 基于 Chrome 扩展 Manifest V3 开发，因此可以在以下桌面浏
 
 如果浏览器支持安装未打包扩展，并兼容 Manifest V3，通常也可以加载这个项目的 `dist/` 产物。
 
-## 宠物格式
+## 宠物
+
+### 获取宠物
+
+OpenPet 首次安装时已经预置了官方宠物；如果你后来删除了这些宠物，也可以前往 [`AwesomeHou/openpet-ai-girls`](https://github.com/AwesomeHou/openpet-ai-girls) 仓库继续获取。
+
+### 宠物格式
 
 OpenPet 使用与 Codex pets 兼容的宠物包格式。一个宠物通常包含两部分：
 
 - `pet.json`：宠物元数据，包含 `id`、`displayName`、`description` 和 `spritesheetPath`
-- `spritesheet.webp`：宠物动画精灵图。当前文档按 Codex pet 风格将其视为一张动作图集，atlas 行 `0~8` 共 9 行，分别对应 `idle`、`running-right`、`running-left`、`waving`、`jumping`、`failed`、`waiting`、`running`、`review`。
+- `spritesheet.webp`：宠物动画精灵图。当前文档按 Codex pet 风格将其视为一张动作图集，atlas 行 `0~8` 共 9 行，分别对应 `idle`、`running-right`、`running-left`、`waving`、`jumping`、`failed`、`waiting`、`running`、`review`
 
 你导入到 OpenPet 的宠物包，本质上就是一个包含上述文件的本地宠物资源包。
 
-## 如何制作宠物
+### 如何制作宠物
 
 如果你想自己制作 OpenPet 宠物，推荐使用 Codex 的 `hatch-pet` 技能：
 
